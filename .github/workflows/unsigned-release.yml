@@ -1,0 +1,102 @@
+name: Unsigned release (macOS + Windows)
+
+# Builds an unsigned macOS .dmg (ad-hoc signed, via packaging/macos/package.sh) and an unsigned
+# Windows portable build, then publishes both as a GitHub Release — fully automated, no local
+# tooling or personal authentication needed: GitHub-hosted runners ship `gh` pre-installed, and
+# every job gets a GITHUB_TOKEN with permission to create releases.
+#
+# Deliberately not tied to this repo's real release process (release.yml) or its tag scheme: this
+# is a throwaway/dev distribution path, always marked a pre-release, and the `tag` input is
+# chosen at dispatch time so it can never collide with a real version tag.
+#
+# Porting to another repo: adjust `BIN_NAMES` below and the `packaging/macos/package.sh` call
+# (or point it at that repo's own equivalent) to match its binaries and packaging script.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create, e.g. v0.8.0-unsigned"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  BIN_NAMES: pdfcraft pdfcraft-cli
+
+jobs:
+  macos:
+    runs-on: macos-14 # normal tier; macos-15-xlarge (used by release.yml) needs a paid large-runner plan
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: macos-universal
+      - name: Build and package (ad-hoc signed)
+        run: packaging/macos/package.sh --arch universal
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-build
+          path: dist/release/*
+
+  windows:
+    runs-on: windows-latest
+    env:
+      # Static CRT so the .exe runs without the Visual C++ redistributable installed.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: windows-x64
+      - name: Build
+        run: cargo build --release -p pdfcraft -p pdfcraft-cli
+      - name: Zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/release/pdfcraft.exe, target/release/pdfcraft-cli.exe `
+            -DestinationPath pdfcraft-windows-x64.zip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-build
+          path: pdfcraft-windows-x64.zip
+
+  release:
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-build
+          path: assets/macos
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-build
+          path: assets/windows
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          cat > notes.md <<EOF
+          Unsigned dev build — not the signed/notarized release.
+
+          - Commit: ${{ github.sha }}
+          - macOS: ad-hoc signed, universal (Apple Silicon + Intel). Gatekeeper will block it on
+            launch; right-click the app → Open (or \`xattr -dr com.apple.quarantine PdfCraft.app\`
+            after extracting from the .dmg).
+          - Windows: unsigned, x64, no installer (plain \`.exe\`s in the zip). SmartScreen will warn
+            on first run — "More info" → "Run anyway".
+          - No Linux, FreeBSD or web build in this release.
+          EOF
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "Unsigned dev build ($TAG)" \
+            --prerelease \
+            --notes-file notes.md \
+            assets/macos/* assets/windows/*
