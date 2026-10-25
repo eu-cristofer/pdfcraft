@@ -42,11 +42,18 @@ about rebases, and it applies here too: "`main` moves fast enough that a file ca
 hundreds of lines under a branch"), and only continue once you understand what each side changed.
 An agent should **not** auto-resolve a conflict by blindly picking one side.
 
-Once the merge is clean (or has been reviewed):
+**Recommended: land it through a PR, not a direct push to `main`.** This repo's own `CLAUDE.md`
+states the convention plainly — "`main`... is never pushed to directly... open a PR" — and a
+sync is exactly the kind of change worth a second look before it lands, even on a fork:
 
 ```sh
-git push origin main
+git checkout -b sync/$(date +%Y%m%d)
+git push origin sync/$(date +%Y%m%d)
+# then open the PR GitHub prints a link for, and merge once it's green
 ```
+
+If you'd rather push straight to `main` (e.g. a solo fork, no CI gating it), that still works —
+`git push origin main` — but treat it as the fallback, not the default.
 
 ## 3. Sanity check before releasing (recommended)
 
@@ -62,15 +69,23 @@ broken.
 
 ## 4. Cut a fresh release
 
-The previous release used tag `v0.8.0-unsigned`. **Don't reuse it** — GitHub rejects a release
-tag that already exists, and this fork's version number won't necessarily have moved even though
-the code did. Use a tag that's safe to generate every time:
+**Tag methodology: `<upstream-version>-unsigned.<YYYYMMDD>`** — e.g. `0.14.0-unsigned.20261025`.
+Don't reuse a tag — GitHub rejects a release tag that already exists, and this fork's version
+number won't necessarily have moved even though the code did, so the date component is what
+keeps repeated releases unique. The upstream-version component is what makes the tag self-
+describing: looking at a release tells you which `storytold/pdfcraft` version it was built from,
+with no need to cross-reference `CHANGELOG.md`.
 
 ```sh
-TAG="unsigned-$(date +%Y%m%d)"        # e.g. unsigned-20261026
-# or, if you want it tied to the exact commit instead of the date:
-TAG="unsigned-$(git rev-parse --short HEAD)"
+UPSTREAM_VERSION=$(awk '
+  /^\[/ { in_pkg = ($0 == "[workspace.package]"); next }
+  in_pkg && $1 == "version" { gsub(/[" ]/, "", $3); print $3; exit }
+' Cargo.toml)   # same one-liner packaging/env.sh uses to read the version
+TAG="${UPSTREAM_VERSION}-unsigned.$(date +%Y%m%d)"
 ```
+
+If you cut two releases from the *same* upstream version on the *same* day, append the short
+commit SHA to disambiguate: `TAG="${TAG}.$(git rev-parse --short HEAD)"`.
 
 **Web UI:**
 1. `https://github.com/eu-cristofer/pdfcraft/actions/workflows/unsigned-release.yml`
