@@ -53,15 +53,31 @@ impl ExportRect {
     }
 }
 
-/// Raw snapshot export data before canonical ordering, IDs and image paths are assigned.
+/// Explicit user-typed metadata for one rectangle-driven snapshot export item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotExportMetadata {
+    pub caption: String,
+    pub note: Option<String>,
+}
+
+/// OCR derived from the same selected portion as the snapshot rectangle.
+///
+/// v1 keeps this seam in the engine model without making it canonical manifest data yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotExportOcr {
+    pub text: String,
+}
+
+/// Raw rectangle-driven snapshot export data before canonical ordering, IDs and image paths are assigned.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SnapshotExportItemInput {
     pub order: usize,
     /// 1-based page number in displayed-page space.
     pub page: usize,
     pub rect: ExportRect,
-    pub caption: String,
-    pub note: Option<String>,
+    pub metadata: SnapshotExportMetadata,
+    /// OCR for this selected portion, when a later caller has already derived it.
+    pub ocr: Option<SnapshotExportOcr>,
 }
 
 /// The export package item kind. v1 only emits snapshots, but later package artifacts consume
@@ -88,8 +104,9 @@ pub struct SnapshotExportItem {
     pub page: usize,
     pub rect: ExportRect,
     pub image_path: String,
-    pub caption: String,
-    pub note: Option<String>,
+    pub metadata: SnapshotExportMetadata,
+    /// OCR for this selected portion, kept out of `manifest.json` in v1.
+    pub ocr: Option<SnapshotExportOcr>,
 }
 
 /// End-to-end inputs for writing one snapshot export package.
@@ -166,6 +183,10 @@ fn selected_comment_caption(annotation: &pdfcraft_render::Annotation) -> Result<
     }
 }
 
+fn selected_comment_metadata(annotation: &pdfcraft_render::Annotation) -> Result<SnapshotExportMetadata, String> {
+    Ok(SnapshotExportMetadata { caption: selected_comment_caption(annotation)?, note: selected_comment_note(annotation.contents.as_deref()) })
+}
+
 fn selected_comment_export_rect(page: &pdfcraft_render::PageInfo, annotation: &pdfcraft_render::Annotation) -> Result<ExportRect, String> {
     let shown = annotation.shown_rect(page.rotation);
     let x0 = shown[0].min(shown[2]);
@@ -199,8 +220,8 @@ fn selected_comment_snapshot_export_item_input_from_parts(
         order,
         page: annotation.page + 1,
         rect: selected_comment_export_rect(page, annotation)?,
-        caption: selected_comment_caption(annotation)?,
-        note: selected_comment_note(annotation.contents.as_deref()),
+        metadata: selected_comment_metadata(annotation)?,
+        ocr: None,
     })
 }
 
@@ -319,8 +340,8 @@ pub fn normalize_snapshot_export_items(page_count: usize, items: Vec<SnapshotExp
             page: item.page,
             rect,
             image_path,
-            caption: item.caption,
-            note: item.note,
+            metadata: item.metadata,
+            ocr: item.ocr,
         });
     }
     Ok(normalized)
@@ -524,8 +545,8 @@ pub fn snapshot_export_manifest_json(items: &[SnapshotExportItem]) -> Result<Str
         out.push('\n');
         out.push_str("      },\n");
         out.push_str("      \"caption\": ");
-        out.push_str(&json_string(&item.caption)?);
-        if let Some(note) = item.note.as_deref() {
+        out.push_str(&json_string(&item.metadata.caption)?);
+        if let Some(note) = item.metadata.note.as_deref() {
             out.push_str(",\n");
             out.push_str("      \"note\": ");
             out.push_str(&json_string(note)?);
@@ -554,11 +575,11 @@ pub fn snapshot_export_report_tex(items: &[SnapshotExportItem]) -> Result<String
         out.push_str("\\begin{figure}[htbp]\n");
         out.push_str("\\centering\n");
         out.push_str(&format!("\\includegraphics[width=\\linewidth]{{{}}}\n", item.image_path));
-        out.push_str(&format!("\\caption{{{}}}\n", latex_escape_plain_text(&item.caption)));
+        out.push_str(&format!("\\caption{{{}}}\n", latex_escape_plain_text(&item.metadata.caption)));
         out.push_str(&format!("\\label{{fig:{}}}\n", item.id));
         out.push_str("\\end{figure}\n");
 
-        if let Some(note) = item.note.as_deref() {
+        if let Some(note) = item.metadata.note.as_deref() {
             out.push('\n');
             out.push_str("\\paragraph{Note.}\n");
             out.push_str(&latex_escape_plain_text(note));
@@ -1075,18 +1096,65 @@ mod image_name_tests {
 
 #[cfg(test)]
 mod snapshot_export_tests {
-    use super::{ExportItemKind, ExportRect, SnapshotExportItemInput, normalize_package_relative_path, normalize_snapshot_export_items};
+    use super::{
+        ExportItemKind, ExportRect, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportOcr, normalize_package_relative_path,
+        normalize_snapshot_export_items,
+    };
+
+    fn metadata(caption: &str, note: Option<&str>) -> SnapshotExportMetadata {
+        SnapshotExportMetadata { caption: caption.into(), note: note.map(str::to_owned) }
+    }
 
     fn input(order: usize, page: usize, caption: &str) -> SnapshotExportItemInput {
-        SnapshotExportItemInput { order, page, rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 }, caption: caption.into(), note: None }
+        SnapshotExportItemInput {
+            order,
+            page,
+            rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
+            metadata: metadata(caption, None),
+            ocr: None,
+        }
     }
 
     #[test]
     fn snapshot_items_follow_explicit_order_and_preserve_ties() {
         let items = normalize_snapshot_export_items(3, vec![input(30, 3, "third"), input(10, 2, "first"), input(10, 1, "second")]).unwrap();
 
-        assert_eq!(items.iter().map(|item| item.caption.as_str()).collect::<Vec<_>>(), vec!["first", "second", "third"]);
+        assert_eq!(items.iter().map(|item| item.metadata.caption.as_str()).collect::<Vec<_>>(), vec!["first", "second", "third"]);
         assert_eq!(items.iter().map(|item| item.page).collect::<Vec<_>>(), vec![2, 1, 3]);
+    }
+
+    #[test]
+    fn typed_metadata_flows_into_normalized_export_items() {
+        let items = normalize_snapshot_export_items(
+            2,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 2,
+                rect: ExportRect { x: 12.0, y: 18.0, width: 22.0, height: 28.0 },
+                metadata: metadata("Typed caption", Some("Typed note")),
+                ocr: None,
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(items[0].metadata, metadata("Typed caption", Some("Typed note")));
+    }
+
+    #[test]
+    fn normalized_items_keep_an_explicit_ocr_slot() {
+        let items = normalize_snapshot_export_items(
+            1,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
+                metadata: metadata("Caption", None),
+                ocr: Some(SnapshotExportOcr { text: "derived OCR".into() }),
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(items[0].ocr, Some(SnapshotExportOcr { text: "derived OCR".into() }));
     }
 
     #[test]
@@ -1123,8 +1191,8 @@ mod snapshot_export_tests {
                 order: 0,
                 page: 1,
                 rect: ExportRect { x: -1.0, y: 20.0, width: 30.0, height: 40.0 },
-                caption: "bad rect".into(),
-                note: None,
+                metadata: metadata("bad rect", None),
+                ocr: None,
             }],
         )
         .unwrap_err();
@@ -1136,8 +1204,8 @@ mod snapshot_export_tests {
                 order: 0,
                 page: 1,
                 rect: ExportRect { x: 10.0, y: 20.0, width: 0.0, height: 40.0 },
-                caption: "bad rect".into(),
-                note: None,
+                metadata: metadata("bad rect", None),
+                ocr: None,
             }],
         )
         .unwrap_err();
@@ -1149,8 +1217,8 @@ mod snapshot_export_tests {
                 order: 0,
                 page: 1,
                 rect: ExportRect { x: f32::NAN, y: 20.0, width: 30.0, height: 40.0 },
-                caption: "bad rect".into(),
-                note: None,
+                metadata: metadata("bad rect", None),
+                ocr: None,
             }],
         )
         .unwrap_err();
@@ -1163,9 +1231,13 @@ mod snapshot_export_artifact_tests {
     use serde_json::Value;
 
     use super::{
-        ExportRect, SnapshotExportItem, SnapshotExportItemInput, normalize_snapshot_export_items, snapshot_export_manifest_json,
-        snapshot_export_report_tex,
+        ExportRect, SnapshotExportItem, SnapshotExportItemInput, SnapshotExportMetadata, normalize_snapshot_export_items,
+        snapshot_export_manifest_json, snapshot_export_report_tex,
     };
+
+    fn metadata(caption: &str, note: Option<&str>) -> SnapshotExportMetadata {
+        SnapshotExportMetadata { caption: caption.into(), note: note.map(str::to_owned) }
+    }
 
     fn sample_items() -> Vec<SnapshotExportItem> {
         normalize_snapshot_export_items(
@@ -1175,15 +1247,15 @@ mod snapshot_export_artifact_tests {
                     order: 20,
                     page: 4,
                     rect: ExportRect { x: 90.5, y: 244.0, width: 180.0, height: 110.0 },
-                    caption: "Comment {callout} _ review".into(),
-                    note: None,
+                    metadata: metadata("Comment {callout} _ review", None),
+                    ocr: None,
                 },
                 SnapshotExportItemInput {
                     order: 10,
                     page: 2,
                     rect: ExportRect { x: 72.0, y: 128.0, width: 216.0, height: 96.0 },
-                    caption: "50% approved & signed #1".into(),
-                    note: Some(r"Path C:\exports\item_{1} uses ~ temp ^ dir and costs $5.".into()),
+                    metadata: metadata("50% approved & signed #1", Some(r"Path C:\exports\item_{1} uses ~ temp ^ dir and costs $5.")),
+                    ocr: None,
                 },
             ],
         )
@@ -1308,9 +1380,13 @@ mod snapshot_export_package_tests {
     use pdfcraft_render::inspect;
 
     use super::{
-        ExportRect, ExportSource, SnapshotExportItemInput, SnapshotExportPackageInput, SnapshotExportWriteHooks, normalize_snapshot_export_items,
-        write_snapshot_export_package, write_snapshot_export_package_with_hooks,
+        ExportRect, ExportSource, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportPackageInput, SnapshotExportWriteHooks,
+        normalize_snapshot_export_items, write_snapshot_export_package, write_snapshot_export_package_with_hooks,
     };
+
+    fn metadata(caption: &str, note: Option<&str>) -> SnapshotExportMetadata {
+        SnapshotExportMetadata { caption: caption.into(), note: note.map(str::to_owned) }
+    }
 
     struct TestDir {
         path: std::path::PathBuf,
@@ -1411,8 +1487,8 @@ mod snapshot_export_package_tests {
                 order: 0,
                 page: 1,
                 rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
-                caption: "Black box".into(),
-                note: Some("One item".into()),
+                metadata: metadata("Black box", Some("One item")),
+                ocr: None,
             }],
         )
         .unwrap();
@@ -1453,15 +1529,15 @@ mod snapshot_export_package_tests {
                     order: 20,
                     page: 2,
                     rect: ExportRect { x: 90.0, y: 110.0, width: 50.0, height: 40.0 },
-                    caption: "Second page".into(),
-                    note: None,
+                    metadata: metadata("Second page", None),
+                    ocr: None,
                 },
                 SnapshotExportItemInput {
                     order: 10,
                     page: 1,
                     rect: ExportRect { x: 10.0, y: 30.0, width: 40.0, height: 30.0 },
-                    caption: "First page".into(),
-                    note: Some("ordered first".into()),
+                    metadata: metadata("First page", Some("ordered first")),
+                    ocr: None,
                 },
             ],
         )
@@ -1503,8 +1579,8 @@ mod snapshot_export_package_tests {
                 order: 0,
                 page: 1,
                 rect: ExportRect { x: 40.0, y: 20.0, width: 30.0, height: 60.0 },
-                caption: "Rotated red band".into(),
-                note: None,
+                metadata: metadata("Rotated red band", None),
+                ocr: None,
             }],
         )
         .unwrap();
@@ -1541,8 +1617,8 @@ mod snapshot_export_package_tests {
                 order: 0,
                 page: 1,
                 rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
-                caption: "Black box".into(),
-                note: None,
+                metadata: metadata("Black box", None),
+                ocr: None,
             }],
         )
         .unwrap();
@@ -1572,8 +1648,8 @@ mod snapshot_export_package_tests {
                 order: 0,
                 page: 1,
                 rect: ExportRect { x: 180.0, y: 30.0, width: 40.0, height: 50.0 },
-                caption: "Out of bounds".into(),
-                note: None,
+                metadata: metadata("Out of bounds", None),
+                ocr: None,
             }],
         )
         .unwrap();
