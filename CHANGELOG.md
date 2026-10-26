@@ -13,6 +13,7 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Added** an engine bridge from selected rectangle comments to snapshot export items — supported-kind filtering, displayed-rectangle mapping, type-label captions, comment-text notes, and canonical comment-target ordering for reuse by UI and automation.
 - **Specified** `docs/selected-rectangle-export.md` — repo-local contract for selected-comment snapshot export covering supported v1 annotation kinds, `caption`/`note` mapping, displayed-rectangle semantics, canonical export ordering, and later UI/automation handoff into the engine.
 - **Registered** sprint project `docs/changes/002_selected-rec/` — phased plan for selected rectangle comment export through the current standalone snapshot package/report flow.
 - **Hardened** snapshot export v1 with repeatability and guardrail coverage — deterministic package reruns, explicit rejection of non-`snapshot` evidence kinds in v1, and final contributor-facing docs for extension seams.
