@@ -20,11 +20,11 @@ Each run MUST:
 8. When all sprints are checked, mark the project `Status: ready to archive` and
    archive it later with `/sprint-loop archive <project>`.
 
-Status: active
+Status: ready to archive
 
 - [x] [Sprint 1 — Discovery and contract decisions](./sprint-1.md) — done 2026-10-25
 - [x] [Sprint 2 — Spec hardening and examples](./sprint-2.md) — done 2026-10-25
 - [x] [Sprint 3 — Internal export model and ordering](./sprint-3.md) — done 2026-10-25
 - [x] [Sprint 4 — Manifest and LaTeX generation core](./sprint-4.md) — done 2026-10-25
 - [x] [Sprint 5 — Raster/source export and validation](./sprint-5.md) — done 2026-10-25
-- [ ] [Sprint 6 — Tests, docs, and extensibility guardrails](./sprint-6.md)
+- [x] [Sprint 6 — Tests, docs, and extensibility guardrails](./sprint-6.md) — done 2026-10-25

@@ -81,6 +81,11 @@ family (`sign`, `sign_with_timestamp`, `timestamp_document`, `embed_ltv`).
 | `js` | The bridge to `pdfcraft-js`. `forms` never depends on `js` directly; the engine injects it, so a build without JavaScript is possible |
 | `xfa`, `ocr`, `compare`, `export` | Façades over the L3/L4 crates of the same names |
 
+`export` now also holds the v1 snapshot export package core: normalized ordered snapshot items,
+deterministic `manifest.json` / `report.tex` generation, and package writing/validation. v1 is
+snapshot-only on purpose; future evidence kinds and output targets should extend that seam with new
+explicit kinds and contracts rather than weakening the current one.
+
 ## Not done here
 
 - **Rendering is still borrowed.** `pdfcraft-render` wraps `hayro` and inspects through `lopdf`

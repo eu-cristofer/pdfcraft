@@ -461,7 +461,6 @@ impl SnapshotExportWriteHooks {
     }
 
     #[cfg(test)]
-    #[cfg(test)]
     fn fail_before_write(relative: &str) -> Self {
         Self { fail_before_write_rel_path: Some(relative.to_owned()) }
     }
