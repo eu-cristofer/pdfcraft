@@ -1,53 +1,118 @@
 //! View ▸ Zoom ▸ Marquee Zoom (drag a rectangle to fill the window with it; click to zoom in)
 //! and Edit ▸ Take a Snapshot (drag a rectangle to copy that area as an image).
 
+use chrono::Utc;
 use egui::{Color32, CornerRadius, Pos2, Rect, Stroke};
+use pdfcraft_engine::{
+    Document,
+    export::{CropPdfRect, CropReviewItem, ExportItemKind},
+};
 use pdfcraft_render::{RenderConfig, RenderRequest, RequestKind, Tile};
 
 use crate::canvas::{DocView, PageXform};
 use crate::page_pointer::PagePointer;
-use crate::{Dialog, PdfCraftApp, QuickTool};
+use crate::{Dialog, PdfCraftApp, QuickTool, RightPanel};
 
 /// A finished gesture: (page, the rectangle on screen, the same in page view points
 /// [x0, y0, x1, y1]); a plain click has an empty rectangle.
 pub type Marquee = (usize, Rect, [f32; 4]);
 
-/// Drag a rectangle on page `page` (Marquee Zoom, Snapshot).
-pub(crate) fn page_input(ui: &egui::Ui, resp: &egui::Response, xf: &PageXform, ptr: &PagePointer, page: usize, view: &mut DocView) {
+/// Shared marquee drag state for Marquee Zoom, Snapshot, and crop-review rectangle creation.
+pub(crate) fn marquee_input(
+    resp: &egui::Response,
+    xf: &PageXform,
+    ptr: &PagePointer,
+    page: usize,
+    marquee: &mut Option<(usize, Pos2)>,
+    marquee_done: &mut Option<Marquee>,
+) -> bool {
     let (pointer, origin) = (ptr.pos, ptr.origin);
-    if pointer.is_some_and(|p| xf.rect.contains(p)) {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-    }
+    let mut used = false;
+
     if resp.drag_started()
         && let Some(o) = origin.filter(|o| xf.rect.contains(*o))
     {
-        view.marquee = Some((page, o));
+        *marquee = Some((page, o));
+        used = true;
     }
-    if let Some((p, start)) = view.marquee
+    if let Some((p, start)) = *marquee
+        && p == page
+        && let Some(end) = pointer
+    {
+        let end = Pos2::new(end.x.clamp(xf.rect.left(), xf.rect.right()), end.y.clamp(xf.rect.top(), xf.rect.bottom()));
+        let r = Rect::from_two_pos(start, end);
+        if resp.drag_stopped() {
+            *marquee = None;
+            let (a, b) = (xf.screen_to_view(r.left_top()), xf.screen_to_view(r.right_bottom()));
+            *marquee_done = Some((page, r, [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)]));
+        }
+        used = true;
+    }
+    if !used
+        && resp.clicked()
+        && let Some(p) = pointer.filter(|p| xf.rect.contains(*p))
+    {
+        let v = xf.screen_to_view(p);
+        *marquee_done = Some((page, Rect::from_min_size(p, egui::Vec2::ZERO), [v.0, v.1, v.0, v.1]));
+        used = true;
+    }
+
+    used
+}
+
+pub(crate) fn paint_marquee(ui: &egui::Ui, xf: &PageXform, pointer: Option<Pos2>, page: usize, marquee: Option<(usize, Pos2)>) {
+    if pointer.is_some_and(|p| xf.rect.contains(p)) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+    if let Some((p, start)) = marquee
         && p == page
         && let Some(end) = pointer
     {
         let end = Pos2::new(end.x.clamp(xf.rect.left(), xf.rect.right()), end.y.clamp(xf.rect.top(), xf.rect.bottom()));
         let r = Rect::from_two_pos(start, end);
         ui.painter().rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.0, Color32::from_rgb(0x14, 0x73, 0xE6)), egui::StrokeKind::Middle);
-        if resp.drag_stopped() {
-            view.marquee = None;
-            let (a, b) = (xf.screen_to_view(r.left_top()), xf.screen_to_view(r.right_bottom()));
-            view.marquee_done = Some((page, r, [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)]));
-        }
     }
-    if resp.clicked()
-        && let Some(p) = pointer.filter(|p| xf.rect.contains(*p))
-    {
-        let v = xf.screen_to_view(p);
-        view.marquee_done = Some((page, Rect::from_min_size(p, egui::Vec2::ZERO), [v.0, v.1, v.0, v.1]));
-    }
+}
+
+/// Drag a rectangle on page `page` (Marquee Zoom, Snapshot).
+pub(crate) fn page_input(ui: &egui::Ui, resp: &egui::Response, xf: &PageXform, ptr: &PagePointer, page: usize, view: &mut DocView) {
+    let _ = marquee_input(resp, xf, ptr, page, &mut view.marquee, &mut view.marquee_done);
+    paint_marquee(ui, xf, ptr.pos, page, view.marquee);
 }
 
 impl PdfCraftApp {
     /// Finish a marquee gesture for the current tool.
     pub(crate) fn finish_marquee(&mut self, index: usize, done: Marquee) {
         let (page, rect, view_rect) = done;
+        if self.views.get(index).is_some_and(|view| view.crop_review.creating) {
+            if view_rect[2] - view_rect[0] < 2.0 || view_rect[3] - view_rect[1] < 2.0 {
+                return;
+            }
+            let Some(id) = self.views.get(index).map(|view| view.id) else { return };
+            let item = match self.session.get(id).ok_or_else(|| "no document".to_string()).and_then(|doc| crop_review_item(doc, page, view_rect)) {
+                Ok(item) => item,
+                Err(e) => {
+                    self.notify_fmt("Couldn't add the crop: {e}", &[("e", &e)]);
+                    return;
+                }
+            };
+            let created_id = item.id.clone();
+            let inserted = self.session.crop_review_mut(id).map_err(|e| e.to_string()).and_then(|store| store.upsert(item).map(|_| ()));
+            match inserted {
+                Ok(()) => {
+                    if self.right.is_none() {
+                        self.choose_right_panel(Some(RightPanel::Crops));
+                    }
+                    if let Some(view) = self.views.get_mut(index) {
+                        view.crop_review.creating = false;
+                        view.crop_review.select(created_id.as_str());
+                    }
+                }
+                Err(e) => self.notify_fmt("Couldn't add the crop: {e}", &[("e", &e)]),
+            }
+            return;
+        }
+
         match self.quick_tool {
             QuickTool::MarqueeZoom => {
                 let view = &mut self.views[index];
@@ -149,6 +214,39 @@ impl PdfCraftApp {
         self.last_snapshot = Some((w, h, out.rgba));
         Ok((w, h))
     }
+}
+
+fn crop_review_item(doc: &Document, page: usize, view_rect: [f32; 4]) -> Result<CropReviewItem, String> {
+    let page_info = doc.info.pages.get(page).ok_or("no page")?;
+    let a = page_info.view_to_user(view_rect[0], view_rect[1]);
+    let b = page_info.view_to_user(view_rect[2], view_rect[3]);
+    let rect_pdf = CropPdfRect::from_user_rect([a[0], a[1], b[0], b[1]])?;
+    let now = Utc::now();
+    Ok(CropReviewItem {
+        id: next_crop_review_id(doc),
+        kind: ExportItemKind::Snapshot,
+        page_number: page + 1,
+        rect_pdf,
+        caption: String::new(),
+        note: None,
+        ocr_text: None,
+        ocr_extracted_at: None,
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+fn next_crop_review_id(doc: &Document) -> String {
+    let next = doc
+        .crop_review()
+        .items()
+        .iter()
+        .filter_map(|item| item.id.strip_prefix("crop-"))
+        .filter_map(|suffix| suffix.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    format!("crop-{next:04}")
 }
 
 /// The normalised bounds [u0, v0, u1, v1] of the pixels that aren't (near) white, if any.

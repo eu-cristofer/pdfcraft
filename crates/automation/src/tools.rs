@@ -1042,6 +1042,15 @@ pub fn tools() -> Vec<ToolDef> {
                 }),
                 &["doc", "out", "items"],
             )),
+        t("doc_export_crop_review_package", "Export crop review package", "Write a snapshot evidence package to out from the document's persisted crop-review dataset, using the current document state including unsaved edits. The package stays snapshot-only and writes manifest.json, source.pdf, report.tex and cropped PNG evidence through the shared engine export path, with canonical crop ordering and the existing OCR availability rule.")
+            .destructive()
+            .with(schema(
+                json!({
+                    "doc": doc(),
+                    "out": { "type": "string", "description": "Directory to create for the package. Must not already exist." }
+                }),
+                &["doc", "out"],
+            )),
         t("accessibility_autotag_preview", "Preview automatic tags", "Propose paragraph and heading tags for visible text blocks on one page. Returns page bounds, tentative roles and reasons. Does not change the PDF or claim accessibility compliance. Images, tables, lists, annotations and existing structure require separate review.")
             .ro()
             .with(schema(json!({ "doc": doc(), "page": { "type": "integer", "minimum": 1 } }), &["doc", "page"])),

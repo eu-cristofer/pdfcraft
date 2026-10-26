@@ -417,6 +417,7 @@ impl PdfCraftApp {
             }
             "export.image" => self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::Image)),
             "export.text" => self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::Text)),
+            "export.crop_review_package" => self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::CropReviewPackage)),
             "a11y.check" => self.start_accessibility_check(),
             "a11y.find_untagged" => self.find_untagged_content(),
             "ocr.recognize" => self.dialog = Some(Dialog::RecognizeText),
@@ -549,9 +550,20 @@ impl PdfCraftApp {
                 }
             }
             "view.marquee_zoom" => self.quick_tool = crate::QuickTool::MarqueeZoom,
+            "edit.crop_review" => {
+                self.quick_tool = crate::QuickTool::CropReview;
+                if let Some(i) = active {
+                    self.views[i].crop_review.creating = true;
+                    self.views[i].organize = false;
+                }
+                self.notify_tr("Drag a rectangle to create a persistent crop");
+            }
             "edit.column_select" => self.quick_tool = crate::QuickTool::ColumnSelect,
             "edit.snapshot" => {
                 self.quick_tool = crate::QuickTool::Snapshot;
+                if let Some(i) = active {
+                    self.views[i].crop_review.creating = false;
+                }
                 self.notify_tr("Drag a rectangle around the area to copy");
             }
             "edit.copy" => {

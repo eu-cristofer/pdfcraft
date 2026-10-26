@@ -606,6 +606,7 @@ pub struct DocView {
     pub block_drag: Option<crate::edit_text_ui::BlockDrag>,
     /// Commenting state: selected comment, gestures, composer.
     pub comments: crate::comments::CommentView,
+    pub(crate) crop_review: crate::crop_review_ui::CropReviewView,
     pub measure: crate::measure_ui::MeasureView,
     /// Form filling state: the focused field.
     pub forms: crate::forms_ui::FormView,
@@ -772,6 +773,18 @@ impl DocView {
         self.screen_xforms.iter().find(|(p, _)| *p == page).map(|(_, xf)| xf.rect)
     }
 
+    pub fn selected_crop(&self) -> Option<&str> {
+        self.crop_review.selected.as_deref()
+    }
+
+    pub fn select_crop(&mut self, id: &str) {
+        self.crop_review.select(id);
+    }
+
+    pub fn set_crop_review_creating(&mut self, creating: bool) {
+        self.crop_review.creating = creating;
+    }
+
     /// The document area on screen.
     pub fn viewport_rect(&self) -> Rect {
         self.viewport_screen
@@ -928,6 +941,7 @@ impl DocView {
             pan_hold_until: 0.0,
             slow_pages: HashSet::new(),
             comments: Default::default(),
+            crop_review: Default::default(),
             measure: Default::default(),
             forms: Default::default(),
             prepare: Default::default(),
@@ -3268,6 +3282,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         QuickTool::Hand
         | QuickTool::Measure(_)
         | QuickTool::Crop
+        | QuickTool::CropReview
         | QuickTool::EnhanceCamera
         | QuickTool::Fill(_)
         | QuickTool::Field(_)
@@ -3786,7 +3801,15 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             {
                 view.links.context = Some((i, l.index));
             }
-            let consumed = on_objects || on_edit_text || on_link || on_content || boxing || on_field || comments::page_input(ui, &resp, &pcx, view);
+            let on_crop_review = crate::crops_panel::page_input(&resp, doc, &xf, &ptr, i, view);
+            let consumed = on_objects
+                || on_edit_text
+                || on_link
+                || on_content
+                || boxing
+                || on_field
+                || on_crop_review
+                || comments::page_input(ui, &resp, &pcx, view);
 
             let preview_target =
                 (matches!(tool, QuickTool::Select | QuickTool::Fill(_)) && !comments_hidden).then_some(view.comments.selected).flatten();
@@ -3976,6 +3999,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 crate::redact_ui::paint(painter, i, view, pointer);
             }
             comments::paint_page(ui, painter, &pcx, view);
+            crate::crops_panel::paint_page(ui, painter, doc, &xf, i, view, pointer);
             if editing_content {
                 crate::content_ui::paint_page(painter, &xf, i, info, &added, view, pointer);
             }

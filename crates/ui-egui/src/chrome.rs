@@ -615,6 +615,8 @@ fn main_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                                 (RightPanel::Comments, tl!("Comments")),
                                 (RightPanel::Bookmarks, tl!("Bookmarks")),
                                 (RightPanel::Pages, tl!("Pages")),
+                                (RightPanel::Crops, tl!("Crops")),
+                                (RightPanel::Metadata, tl!("Metadata")),
                                 (RightPanel::Fields, tl!("Fields")),
                                 (RightPanel::Layers, tl!("Layers")),
                                 (RightPanel::Attachments, tl!("Attachments")),
@@ -645,9 +647,10 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let Some(doc) = app.session.get(id) else { return };
     let has_signatures = doc.is_signed();
     let has_check = app.a11y.report.as_ref().is_some_and(|(d, _)| *d == id);
-    let (has_comments, has_outline, has_fields, has_layers, has_files) = (
+    let (has_comments, has_outline, has_crops, has_fields, has_layers, has_files) = (
         !doc.info.annotations.is_empty(),
         !doc.info.outline.is_empty(),
+        !doc.crop_review().items().is_empty(),
         !doc.info.fields.is_empty(),
         !doc.info.layers.is_empty(),
         !doc.info.attachments.is_empty(),
@@ -666,6 +669,8 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
         item(RightPanel::Comments, "message-square-text", "Comments", has(has_comments, "Has comments")),
         item(RightPanel::Bookmarks, "bookmark", "Bookmarks", has(has_outline, "Has bookmarks")),
         item(RightPanel::Pages, "files", "Page thumbnails", None),
+        item(RightPanel::Crops, "crop", "Crops", has(has_crops, "Has crops")),
+        item(RightPanel::Metadata, "tag", "Metadata", has(has_crops, "Has crops")),
         item(RightPanel::Fields, "text-cursor-input", "Form fields", has(has_fields, "Has form fields")),
         item(RightPanel::Layers, "layers", "Layers", has(has_layers, "Has layers")),
         item(RightPanel::Attachments, "paperclip", "Attachments", has(has_files, "Has attachments")),

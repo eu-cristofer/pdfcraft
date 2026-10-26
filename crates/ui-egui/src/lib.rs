@@ -56,6 +56,8 @@ mod create_multiple_ui;
 mod create_ui;
 mod credits;
 mod crop;
+mod crop_review_ui;
+mod crops_panel;
 mod drag_pointer;
 mod export_ui;
 mod js_ui;
@@ -63,6 +65,7 @@ mod js_ui;
 mod macos_association;
 mod marks_ui;
 mod measure_ui;
+mod metadata_panel;
 mod ocr_ui;
 mod optimize_ui;
 mod search_ui;
@@ -209,6 +212,8 @@ pub enum RightPanel {
     Comments,
     Bookmarks,
     Pages,
+    Crops,
+    Metadata,
     Fields,
     Layers,
     Attachments,
@@ -257,6 +262,8 @@ pub enum QuickTool {
     },
     /// View ▸ Zoom ▸ Marquee Zoom.
     MarqueeZoom,
+    /// Crop review: draw a persistent crop rectangle.
+    CropReview,
     /// Edit ▸ Take a Snapshot.
     Snapshot,
     /// Edit ▸ Column Select: drag a rectangle to select only the text inside it (#740). The
@@ -629,6 +636,7 @@ pub struct PdfCraftApp {
     pub side_panels: side_panels::SidePanels,
     pub session: Session,
     pub views: Vec<DocView>,
+    pub crop_review_project_path: Option<String>,
     pub(crate) closed_tabs: Vec<String>,
     /// `None` shows the Home tab.
     pub active: Option<usize>,
@@ -1098,6 +1106,7 @@ impl PdfCraftApp {
         Self {
             session: Session::new(),
             views: Vec::new(),
+            crop_review_project_path: None,
             closed_tabs: Vec::new(),
             active: None,
             mode: Mode::AllTools,
@@ -2914,6 +2923,8 @@ impl PdfCraftApp {
                     "comments" => Some(RightPanel::Comments),
                     "bookmarks" => Some(RightPanel::Bookmarks),
                     "pages" => Some(RightPanel::Pages),
+                    "crops" => Some(RightPanel::Crops),
+                    "metadata" => Some(RightPanel::Metadata),
                     "fields" => Some(RightPanel::Fields),
                     "layers" => Some(RightPanel::Layers),
                     "attachments" => Some(RightPanel::Attachments),
@@ -2970,6 +2981,7 @@ impl PdfCraftApp {
                     "word-count" => Some(Dialog::WordCount),
                     "export-text" => Some(Dialog::Export(export_ui::ExportKind::Text)),
                     "export-all-images" => Some(Dialog::Export(export_ui::ExportKind::AllImages)),
+                    "export-crop-review-package" => Some(Dialog::Export(export_ui::ExportKind::CropReviewPackage)),
                     "accessibility-options" => Some(Dialog::AccessibilityOptions),
                     "recognize-text" => Some(Dialog::RecognizeText),
                     "js-console" => Some(Dialog::JsConsole),
@@ -3146,6 +3158,7 @@ impl PdfCraftApp {
                     "link" => QuickTool::Link,
                     "sign" => QuickTool::SignArea { certify: false },
                     "marquee-zoom" => QuickTool::MarqueeZoom,
+                    "crop-review" => QuickTool::CropReview,
                     "snapshot" => QuickTool::Snapshot,
                     "column-select" => QuickTool::ColumnSelect,
                     "certify" => QuickTool::SignArea { certify: true },
@@ -3174,6 +3187,11 @@ impl PdfCraftApp {
                         QuickTool::Comment(t)
                     }
                 };
+                if value == "crop-review"
+                    && let Some(i) = self.active
+                {
+                    self.views[i].crop_review.creating = true;
+                }
             }
             ("author", _) => self.comment_prefs.author = value.to_string(),
             ("comment-tool-pinned", _) => {

@@ -4,10 +4,13 @@
 //! text, from a
 //! document's working file (so unsaved edits and hidden layers are respected, as on screen).
 
+use std::cmp::Ordering;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind, Tile};
+use serde::{Deserialize, Serialize};
 
 use crate::{Document, comment_kind};
 
@@ -93,6 +96,318 @@ impl ExportItemKind {
             ExportItemKind::Snapshot => "snapshot",
         }
     }
+}
+
+/// One crop rectangle persisted in PDF/document coordinate space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CropPdfRect {
+    pub left: f32,
+    pub bottom: f32,
+    pub right: f32,
+    pub top: f32,
+}
+
+impl CropPdfRect {
+    pub fn validate(self) -> Result<Self, String> {
+        if !self.left.is_finite() || !self.bottom.is_finite() || !self.right.is_finite() || !self.top.is_finite() {
+            return Err("crop rectangle coordinates must be finite".into());
+        }
+        if self.right <= self.left || self.top <= self.bottom {
+            return Err("crop rectangle must have positive width and height".into());
+        }
+        Ok(self)
+    }
+
+    pub fn from_user_rect(rect: [f32; 4]) -> Result<Self, String> {
+        CropPdfRect { left: rect[0].min(rect[2]), bottom: rect[1].min(rect[3]), right: rect[0].max(rect[2]), top: rect[1].max(rect[3]) }.validate()
+    }
+
+    pub fn user_rect(self) -> [f32; 4] {
+        [self.left, self.bottom, self.right, self.top]
+    }
+
+    pub fn to_export_rect(self, page: &pdfcraft_render::PageInfo) -> Result<ExportRect, String> {
+        let rect = self.validate()?;
+        let corners = [
+            page.user_to_view(rect.left, rect.bottom),
+            page.user_to_view(rect.left, rect.top),
+            page.user_to_view(rect.right, rect.bottom),
+            page.user_to_view(rect.right, rect.top),
+        ];
+        let mut left = f32::INFINITY;
+        let mut top = f32::INFINITY;
+        let mut right = f32::NEG_INFINITY;
+        let mut bottom = f32::NEG_INFINITY;
+        for [x, y] in corners {
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x);
+            bottom = bottom.max(y);
+        }
+        ExportRect { x: left, y: top, width: right - left, height: bottom - top }.validate()
+    }
+}
+
+/// One persistent crop-review item owned by the engine/document rather than the UI.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CropReviewItem {
+    pub id: String,
+    pub kind: ExportItemKind,
+    pub page_number: usize,
+    pub rect_pdf: CropPdfRect,
+    pub caption: String,
+    pub note: Option<String>,
+    pub ocr_text: Option<String>,
+    pub ocr_extracted_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl CropReviewItem {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.id.trim().is_empty() {
+            return Err("crop id must not be empty".into());
+        }
+        if self.page_number == 0 {
+            return Err("crop page number must be 1-based".into());
+        }
+        self.rect_pdf.validate()?;
+        if self.ocr_extracted_at.is_some() && self.ocr_text.is_none() {
+            return Err("crop OCR timestamp requires OCR text".into());
+        }
+        if self.updated_at < self.created_at {
+            return Err("crop updated_at must not be earlier than created_at".into());
+        }
+        Ok(())
+    }
+
+    pub fn metadata(&self) -> SnapshotExportMetadata {
+        SnapshotExportMetadata { caption: self.caption.clone(), note: self.note.clone() }
+    }
+
+    pub fn ocr(&self) -> Option<SnapshotExportOcr> {
+        self.ocr_text.as_ref().map(|text| SnapshotExportOcr { text: text.clone() })
+    }
+
+    pub fn export_rect(&self, page: &pdfcraft_render::PageInfo) -> Result<ExportRect, String> {
+        self.rect_pdf.to_export_rect(page)
+    }
+
+    pub fn export_item_input(&self, order: usize, page: &pdfcraft_render::PageInfo) -> Result<SnapshotExportItemInput, String> {
+        self.validate()?;
+        Ok(SnapshotExportItemInput { order, page: self.page_number, rect: self.export_rect(page)?, metadata: self.metadata(), ocr: self.ocr() })
+    }
+}
+
+impl Document {
+    pub fn crop_review_snapshot_export_items(&self) -> Result<Vec<SnapshotExportItem>, String> {
+        let mut items = Vec::new();
+        for (order, crop) in self.crop_review.ordered_items(&self.info.pages).into_iter().enumerate() {
+            let page_index =
+                crop.page_number.checked_sub(1).ok_or_else(|| format!("crop {} has invalid page number {}", crop.id, crop.page_number))?;
+            let page = self.info.pages.get(page_index).ok_or_else(|| format!("crop {} refers to missing page {}", crop.id, crop.page_number))?;
+            items.push(crop.export_item_input(order, page)?);
+        }
+        normalize_snapshot_export_items(self.info.pages.len(), items)
+    }
+
+    pub fn crop_review_snapshot_export_package_input(&self) -> Result<SnapshotExportPackageInput, String> {
+        Ok(SnapshotExportPackageInput {
+            items: self.crop_review_snapshot_export_items()?,
+            render_source: self.export_source(),
+            source_pdf_bytes: self.bytes.clone(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CropReviewStore {
+    items: Vec<CropReviewItem>,
+}
+
+impl CropReviewStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn items(&self) -> &[CropReviewItem] {
+        &self.items
+    }
+
+    pub fn get(&self, id: &str) -> Option<&CropReviewItem> {
+        self.items.iter().find(|item| item.id == id)
+    }
+
+    pub fn upsert(&mut self, item: CropReviewItem) -> Result<Option<CropReviewItem>, String> {
+        item.validate()?;
+        if let Some(existing) = self.items.iter_mut().find(|existing| existing.id == item.id) {
+            return Ok(Some(std::mem::replace(existing, item)));
+        }
+        self.items.push(item);
+        Ok(None)
+    }
+
+    pub fn remove(&mut self, id: &str) -> Option<CropReviewItem> {
+        let index = self.items.iter().position(|item| item.id == id)?;
+        Some(self.items.remove(index))
+    }
+
+    pub fn ordered_items<'a>(&'a self, pages: &[pdfcraft_render::PageInfo]) -> Vec<&'a CropReviewItem> {
+        let mut items = self.items.iter().collect::<Vec<_>>();
+        items.sort_by(|left, right| compare_crop_review_items(left, right, pages));
+        items
+    }
+
+    pub fn ordered_ids<'a>(&'a self, pages: &[pdfcraft_render::PageInfo]) -> Vec<&'a str> {
+        self.ordered_items(pages).into_iter().map(|item| item.id.as_str()).collect()
+    }
+}
+
+const CROP_REVIEW_PROJECT_SCHEMA_VERSION: u32 = 1;
+const CROP_REVIEW_PROJECT_JSON_PATH: &str = "project.json";
+const CROP_REVIEW_PROJECT_SOURCE_PDF_PATH: &str = "source.pdf";
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CropReviewProject {
+    pub source_pdf_bytes: Arc<Vec<u8>>,
+    pub crops: Vec<CropReviewItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct CropReviewProjectJson {
+    schema_version: u32,
+    source_pdf: String,
+    crops: Vec<CropReviewProjectCropJson>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct CropReviewProjectCropJson {
+    id: String,
+    kind: String,
+    page_number: usize,
+    rect_pdf: CropReviewProjectRectJson,
+    caption: String,
+    note: Option<String>,
+    ocr_text: Option<String>,
+    ocr_extracted_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+struct CropReviewProjectRectJson {
+    left: f32,
+    bottom: f32,
+    right: f32,
+    top: f32,
+}
+
+impl CropReviewProjectJson {
+    fn from_project(project: &CropReviewProject) -> Self {
+        Self {
+            schema_version: CROP_REVIEW_PROJECT_SCHEMA_VERSION,
+            source_pdf: CROP_REVIEW_PROJECT_SOURCE_PDF_PATH.to_owned(),
+            crops: project.crops.iter().map(CropReviewProjectCropJson::from_item).collect(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.schema_version != CROP_REVIEW_PROJECT_SCHEMA_VERSION {
+            return Err(format!("crop review project schema version {} is not supported", self.schema_version));
+        }
+        if self.source_pdf != CROP_REVIEW_PROJECT_SOURCE_PDF_PATH {
+            return Err(format!("crop review project source_pdf must be {}, got {}", CROP_REVIEW_PROJECT_SOURCE_PDF_PATH, self.source_pdf));
+        }
+        for crop in &self.crops {
+            crop.validate()?;
+        }
+        Ok(())
+    }
+}
+
+impl CropReviewProjectCropJson {
+    fn from_item(item: &CropReviewItem) -> Self {
+        Self {
+            id: item.id.clone(),
+            kind: item.kind.as_str().to_owned(),
+            page_number: item.page_number,
+            rect_pdf: CropReviewProjectRectJson {
+                left: item.rect_pdf.left,
+                bottom: item.rect_pdf.bottom,
+                right: item.rect_pdf.right,
+                top: item.rect_pdf.top,
+            },
+            caption: item.caption.clone(),
+            note: item.note.clone(),
+            ocr_text: item.ocr_text.clone(),
+            ocr_extracted_at: item.ocr_extracted_at,
+            created_at: item.created_at,
+            updated_at: item.updated_at,
+        }
+    }
+
+    fn into_item(self) -> Result<CropReviewItem, String> {
+        let kind = match self.kind.as_str() {
+            "snapshot" => ExportItemKind::Snapshot,
+            other => return Err(format!("crop kind {other} is not supported")),
+        };
+        let item = CropReviewItem {
+            id: self.id,
+            kind,
+            page_number: self.page_number,
+            rect_pdf: CropPdfRect { left: self.rect_pdf.left, bottom: self.rect_pdf.bottom, right: self.rect_pdf.right, top: self.rect_pdf.top },
+            caption: self.caption,
+            note: self.note,
+            ocr_text: self.ocr_text,
+            ocr_extracted_at: self.ocr_extracted_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        };
+        item.validate()?;
+        Ok(item)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let kind = match self.kind.as_str() {
+            "snapshot" => ExportItemKind::Snapshot,
+            other => return Err(format!("crop kind {other} is not supported")),
+        };
+        CropReviewItem {
+            id: self.id.clone(),
+            kind,
+            page_number: self.page_number,
+            rect_pdf: CropPdfRect { left: self.rect_pdf.left, bottom: self.rect_pdf.bottom, right: self.rect_pdf.right, top: self.rect_pdf.top },
+            caption: self.caption.clone(),
+            note: self.note.clone(),
+            ocr_text: self.ocr_text.clone(),
+            ocr_extracted_at: self.ocr_extracted_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+        .validate()
+    }
+}
+
+fn compare_crop_review_items(left: &CropReviewItem, right: &CropReviewItem, pages: &[pdfcraft_render::PageInfo]) -> Ordering {
+    left.page_number
+        .cmp(&right.page_number)
+        .then_with(|| compare_f32(crop_review_sort_key(left, pages).0, crop_review_sort_key(right, pages).0))
+        .then_with(|| compare_f32(crop_review_sort_key(left, pages).1, crop_review_sort_key(right, pages).1))
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+fn crop_review_sort_key(item: &CropReviewItem, pages: &[pdfcraft_render::PageInfo]) -> (f32, f32) {
+    let Some(page) = item.page_number.checked_sub(1).and_then(|index| pages.get(index)) else {
+        return (-item.rect_pdf.top, item.rect_pdf.left);
+    };
+    match item.rect_pdf.to_export_rect(page) {
+        Ok(rect) => (rect.y, rect.x),
+        Err(_) => (-item.rect_pdf.top, item.rect_pdf.left),
+    }
+}
+
+fn compare_f32(left: f32, right: f32) -> Ordering {
+    left.partial_cmp(&right).unwrap_or(Ordering::Equal)
 }
 
 /// One normalized item in the canonical export order.
@@ -671,7 +986,37 @@ fn create_snapshot_export_staging_dir(target: &Path) -> Result<PathBuf, String> 
     Err(format!("could not create a free staging directory beside {}", target.display()))
 }
 
+fn create_named_staging_dir(target: &Path, family: &str) -> Result<PathBuf, String> {
+    let parent = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let name = target.file_name().ok_or_else(|| format!("{family} target must name a directory"))?.to_string_lossy().into_owned();
+
+    if target.exists() {
+        return Err(format!("{family} target already exists: {}", target.display()));
+    }
+
+    let prefix = format!(".{name}.{family}-{}-", std::process::id());
+    for attempt in 0..128 {
+        let candidate = parent.join(format!("{prefix}{attempt}"));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(format!("could not create {family} staging directory {}: {err}", candidate.display())),
+        }
+    }
+
+    Err(format!("could not create a free staging directory beside {}", target.display()))
+}
+
 fn resolve_snapshot_export_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let relative = normalize_package_relative_path(relative)?;
+    let mut path = root.to_path_buf();
+    for part in relative.split('/') {
+        path.push(part);
+    }
+    Ok(path)
+}
+
+fn resolve_crop_review_project_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let relative = normalize_package_relative_path(relative)?;
     let mut path = root.to_path_buf();
     for part in relative.split('/') {
@@ -687,6 +1032,85 @@ fn write_snapshot_export_file(root: &Path, relative: &str, bytes: &[u8], hooks: 
     }
     hooks.maybe_fail_before_write(relative)?;
     std::fs::write(&path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))
+}
+
+fn write_crop_review_project_file(root: &Path, relative: &str, bytes: &[u8]) -> Result<(), String> {
+    let path = resolve_crop_review_project_path(root, relative)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))
+}
+
+pub fn crop_review_project_json(project: &CropReviewProject) -> Result<String, String> {
+    let json = CropReviewProjectJson::from_project(project);
+    serde_json::to_string_pretty(&json)
+        .map(|mut out| {
+            out.push('\n');
+            out
+        })
+        .map_err(|e| format!("failed to serialize crop review project JSON: {e}"))
+}
+
+pub fn write_crop_review_project(target: &Path, source_pdf_bytes: Arc<Vec<u8>>, crops: Vec<CropReviewItem>) -> Result<(), String> {
+    if source_pdf_bytes.is_empty() {
+        return Err("crop review project source.pdf bytes are empty".into());
+    }
+    for crop in &crops {
+        crop.validate()?;
+    }
+    let project = CropReviewProject { source_pdf_bytes, crops };
+    let json = crop_review_project_json(&project)?;
+    let stage = create_named_staging_dir(target, "crop-review-project")?;
+    let result = (|| {
+        write_crop_review_project_file(&stage, CROP_REVIEW_PROJECT_SOURCE_PDF_PATH, project.source_pdf_bytes.as_slice())?;
+        write_crop_review_project_file(&stage, CROP_REVIEW_PROJECT_JSON_PATH, json.as_bytes())?;
+        validate_crop_review_project_dir(&stage, &project, &json)?;
+        std::fs::rename(&stage, target).map_err(|e| format!("could not publish crop review project to {}: {e}", target.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&stage);
+    }
+    result
+}
+
+pub fn load_crop_review_project(root: &Path) -> Result<CropReviewProject, String> {
+    let json_path = resolve_crop_review_project_path(root, CROP_REVIEW_PROJECT_JSON_PATH)?;
+    let json_text = std::fs::read_to_string(&json_path).map_err(|e| format!("could not read {}: {e}", json_path.display()))?;
+    let json: CropReviewProjectJson = serde_json::from_str(&json_text).map_err(|e| format!("crop review project JSON is not valid: {e}"))?;
+    json.validate()?;
+
+    let source_path = resolve_crop_review_project_path(root, &json.source_pdf)?;
+    let source_pdf_bytes = Arc::new(std::fs::read(&source_path).map_err(|e| format!("could not read {}: {e}", source_path.display()))?);
+    if source_pdf_bytes.is_empty() {
+        return Err("crop review project source.pdf bytes are empty".into());
+    }
+
+    let mut crops = Vec::with_capacity(json.crops.len());
+    for crop in json.crops {
+        crops.push(crop.into_item()?);
+    }
+    Ok(CropReviewProject { source_pdf_bytes, crops })
+}
+
+fn validate_crop_review_project_dir(root: &Path, project: &CropReviewProject, json_text: &str) -> Result<(), String> {
+    if !root.is_dir() {
+        return Err(format!("crop review project root {} was not created", root.display()));
+    }
+    let source_path = resolve_crop_review_project_path(root, CROP_REVIEW_PROJECT_SOURCE_PDF_PATH)?;
+    let json_path = resolve_crop_review_project_path(root, CROP_REVIEW_PROJECT_JSON_PATH)?;
+    let staged_source = std::fs::read(&source_path).map_err(|e| format!("could not read {}: {e}", source_path.display()))?;
+    if staged_source != project.source_pdf_bytes.as_slice() {
+        return Err("crop review project source.pdf bytes do not match the provided working file".into());
+    }
+    let staged_json = std::fs::read_to_string(&json_path).map_err(|e| format!("could not read {}: {e}", json_path.display()))?;
+    if staged_json != json_text {
+        return Err("crop review project JSON does not match the generated JSON".into());
+    }
+    let parsed: CropReviewProjectJson = serde_json::from_str(&staged_json).map_err(|e| format!("crop review project JSON is not valid: {e}"))?;
+    parsed.validate()?;
+    Ok(())
 }
 
 fn render_snapshot_export_item_png(renderer: &mut PageRenderer, source: &ExportSource, item: &SnapshotExportItem) -> Result<Vec<u8>, String> {
@@ -1147,9 +1571,11 @@ mod image_name_tests {
 #[cfg(test)]
 mod snapshot_export_tests {
     use super::{
-        ExportItemKind, ExportRect, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportOcr, normalize_package_relative_path,
-        normalize_snapshot_export_items,
+        CropPdfRect, CropReviewItem, CropReviewStore, ExportItemKind, ExportRect, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportOcr,
+        normalize_package_relative_path, normalize_snapshot_export_items,
     };
+    use chrono::{TimeZone, Utc};
+    use pdfcraft_render::PageInfo;
 
     fn metadata(caption: &str, note: Option<&str>) -> SnapshotExportMetadata {
         SnapshotExportMetadata { caption: caption.into(), note: note.map(str::to_owned) }
@@ -1162,6 +1588,29 @@ mod snapshot_export_tests {
             rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
             metadata: metadata(caption, None),
             ocr: None,
+        }
+    }
+
+    fn timestamp(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 26, hour, minute, second).single().unwrap()
+    }
+
+    fn page(width: f32, height: f32, crop: [f32; 4], rotation: u16) -> PageInfo {
+        PageInfo { width, height, label: "1".into(), crop, rotation }
+    }
+
+    fn crop_item(id: &str, page_number: usize, rect_pdf: CropPdfRect) -> CropReviewItem {
+        CropReviewItem {
+            id: id.to_owned(),
+            kind: ExportItemKind::Snapshot,
+            page_number,
+            rect_pdf,
+            caption: format!("caption-{id}"),
+            note: Some(format!("note-{id}")),
+            ocr_text: Some(format!("ocr-{id}")),
+            ocr_extracted_at: Some(timestamp(9, 15, 0)),
+            created_at: timestamp(9, 0, 0),
+            updated_at: timestamp(9, 30, 0),
         }
     }
 
@@ -1273,6 +1722,188 @@ mod snapshot_export_tests {
         )
         .unwrap_err();
         assert_eq!(non_finite, "snapshot rectangle coordinates must be finite");
+    }
+
+    #[test]
+    fn crop_items_order_by_page_display_y_display_x_then_id() {
+        let mut store = CropReviewStore::new();
+        store.upsert(crop_item("page-1-bottom", 1, CropPdfRect::from_user_rect([15.0, 100.0, 55.0, 140.0]).unwrap())).unwrap();
+        store.upsert(crop_item("page-1-top-right", 1, CropPdfRect::from_user_rect([40.0, 680.0, 80.0, 720.0]).unwrap())).unwrap();
+        store.upsert(crop_item("page-1-top-left-b", 1, CropPdfRect::from_user_rect([10.0, 680.0, 50.0, 720.0]).unwrap())).unwrap();
+        store.upsert(crop_item("page-2", 2, CropPdfRect::from_user_rect([5.0, 500.0, 25.0, 540.0]).unwrap())).unwrap();
+        store.upsert(crop_item("page-1-top-left-a", 1, CropPdfRect::from_user_rect([10.0, 680.0, 50.0, 720.0]).unwrap())).unwrap();
+
+        let pages = [page(300.0, 800.0, [0.0, 0.0, 300.0, 800.0], 0), page(300.0, 600.0, [0.0, 0.0, 300.0, 600.0], 0)];
+        assert_eq!(store.ordered_ids(&pages), vec!["page-1-top-left-a", "page-1-top-left-b", "page-1-top-right", "page-1-bottom", "page-2"]);
+    }
+
+    #[test]
+    fn crop_geometry_is_stored_in_pdf_space_and_round_trips_through_page_transforms() {
+        let info = page(100.0, 200.0, [0.0, 0.0, 200.0, 100.0], 90);
+        let display = ExportRect { x: 40.0, y: 20.0, width: 30.0, height: 60.0 };
+        let rect_pdf =
+            CropPdfRect::from_user_rect(info.view_rect_to_user([display.x, display.y, display.x + display.width, display.y + display.height]))
+                .unwrap();
+
+        assert!((rect_pdf.left - 20.0).abs() < 1e-3, "left: {}", rect_pdf.left);
+        assert!((rect_pdf.bottom - 40.0).abs() < 1e-3, "bottom: {}", rect_pdf.bottom);
+        assert!((rect_pdf.right - 80.0).abs() < 1e-3, "right: {}", rect_pdf.right);
+        assert!((rect_pdf.top - 70.0).abs() < 1e-3, "top: {}", rect_pdf.top);
+        assert_ne!(rect_pdf.left, display.x, "stored x is in PDF space, not viewport space");
+        assert_ne!(rect_pdf.bottom, display.y, "stored y is in PDF space, not viewport space");
+        let round_trip = rect_pdf.to_export_rect(&info).unwrap();
+        assert!((round_trip.x - display.x).abs() < 1e-3, "x: {}", round_trip.x);
+        assert!((round_trip.y - display.y).abs() < 1e-3, "y: {}", round_trip.y);
+        assert!((round_trip.width - display.width).abs() < 1e-3, "width: {}", round_trip.width);
+        assert!((round_trip.height - display.height).abs() < 1e-3, "height: {}", round_trip.height);
+    }
+
+    #[test]
+    fn crop_store_round_trips_identifier_metadata_ocr_and_timestamps() {
+        let mut store = CropReviewStore::new();
+        let item = CropReviewItem {
+            id: "crop-123".to_owned(),
+            kind: ExportItemKind::Snapshot,
+            page_number: 3,
+            rect_pdf: CropPdfRect::from_user_rect([12.5, 44.0, 90.0, 120.0]).unwrap(),
+            caption: "Figure caption".to_owned(),
+            note: Some("Reviewer note".to_owned()),
+            ocr_text: Some("Recognized text".to_owned()),
+            ocr_extracted_at: Some(timestamp(10, 5, 0)),
+            created_at: timestamp(9, 55, 0),
+            updated_at: timestamp(10, 6, 0),
+        };
+
+        store.upsert(item.clone()).unwrap();
+        let stored = store.get("crop-123").unwrap();
+        assert_eq!(stored, &item);
+        assert_eq!(stored.kind.as_str(), "snapshot");
+        assert_eq!(stored.metadata(), SnapshotExportMetadata { caption: "Figure caption".to_owned(), note: Some("Reviewer note".to_owned()) });
+        assert_eq!(stored.ocr(), Some(SnapshotExportOcr { text: "Recognized text".to_owned() }));
+    }
+}
+
+#[cfg(test)]
+mod crop_review_project_tests {
+    use super::{CropPdfRect, CropReviewItem, ExportItemKind, load_crop_review_project, write_crop_review_project};
+    use chrono::{TimeZone, Utc};
+    use std::sync::Arc;
+
+    struct TestDir {
+        path: std::path::PathBuf,
+    }
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("pdfcraft-crop-project-{name}-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn child(&self, name: &str) -> std::path::PathBuf {
+            self.path.join(name)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn timestamp(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 26, hour, minute, second).single().unwrap()
+    }
+
+    fn crop(id: &str, page_number: usize, caption: &str, note: Option<&str>, ocr_text: Option<&str>) -> CropReviewItem {
+        CropReviewItem {
+            id: id.to_owned(),
+            kind: ExportItemKind::Snapshot,
+            page_number,
+            rect_pdf: CropPdfRect { left: 12.5, bottom: 44.0, right: 90.0, top: 120.0 },
+            caption: caption.to_owned(),
+            note: note.map(str::to_owned),
+            ocr_text: ocr_text.map(str::to_owned),
+            ocr_extracted_at: ocr_text.map(|_| timestamp(10, 5, 0)),
+            created_at: timestamp(9, 55, 0),
+            updated_at: timestamp(10, 6, 0),
+        }
+    }
+
+    #[test]
+    fn crop_review_project_round_trips_all_fields() {
+        let dir = TestDir::new("round-trip");
+        let target = dir.child("project");
+        let source_pdf = Arc::new(crate::tests::fixture(2));
+        let crops =
+            vec![crop("crop-0001", 1, "Resumo", Some("Observacao com acento"), Some("ocr 日本語")), crop("crop-0002", 2, "第二", Some("nota"), None)];
+
+        write_crop_review_project(&target, source_pdf.clone(), crops.clone()).unwrap();
+        let loaded = load_crop_review_project(&target).unwrap();
+
+        assert_eq!(loaded.source_pdf_bytes.as_slice(), source_pdf.as_slice());
+        assert_eq!(loaded.crops, crops);
+    }
+
+    #[test]
+    fn crop_review_project_writes_expected_folder_shape() {
+        let dir = TestDir::new("shape");
+        let target = dir.child("project");
+        write_crop_review_project(&target, Arc::new(crate::tests::fixture(1)), vec![crop("crop-0001", 1, "Caption", None, None)]).unwrap();
+
+        assert!(target.join("source.pdf").is_file());
+        assert!(target.join("project.json").is_file());
+
+        let json = std::fs::read_to_string(target.join("project.json")).unwrap();
+        assert!(json.contains("\"schema_version\": 1"));
+        assert!(json.contains("\"source_pdf\": \"source.pdf\""));
+        assert!(json.contains("\"crops\""));
+    }
+
+    #[test]
+    fn crop_review_project_json_remains_utf8_readable() {
+        let dir = TestDir::new("utf8");
+        let target = dir.child("project");
+        write_crop_review_project(
+            &target,
+            Arc::new(crate::tests::fixture(1)),
+            vec![crop("crop-0001", 1, "Résumé 日本語", Some("ação"), Some("ocr çã"))],
+        )
+        .unwrap();
+
+        let json = std::fs::read_to_string(target.join("project.json")).unwrap();
+        assert!(json.contains("Résumé 日本語"), "{json}");
+        assert!(json.contains("ação"), "{json}");
+        assert!(json.contains("ocr çã"), "{json}");
+        assert!(!json.contains("\\u"), "{json}");
+    }
+
+    #[test]
+    fn crop_review_project_rejects_invalid_source_pdf_reference() {
+        let dir = TestDir::new("bad-source");
+        let target = dir.child("project");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("source.pdf"), crate::tests::fixture(1)).unwrap();
+        std::fs::write(target.join("project.json"), b"{\n  \"schema_version\": 1,\n  \"source_pdf\": \"../outside.pdf\",\n  \"crops\": []\n}\n")
+            .unwrap();
+
+        let err = load_crop_review_project(&target).unwrap_err();
+        assert!(err.contains("source_pdf must be source.pdf"), "{err}");
+    }
+
+    #[test]
+    fn crop_review_project_rejects_unsupported_schema_version() {
+        let dir = TestDir::new("bad-version");
+        let target = dir.child("project");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("source.pdf"), crate::tests::fixture(1)).unwrap();
+        std::fs::write(target.join("project.json"), b"{\n  \"schema_version\": 2,\n  \"source_pdf\": \"source.pdf\",\n  \"crops\": []\n}\n").unwrap();
+
+        let err = load_crop_review_project(&target).unwrap_err();
+        assert!(err.contains("schema version 2 is not supported"), "{err}");
     }
 }
 

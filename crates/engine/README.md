@@ -86,6 +86,10 @@ deterministic `manifest.json` / `report.tex` generation, and package writing/val
 snapshot-only on purpose; future evidence kinds and output targets should extend that seam with new
 explicit kinds and contracts rather than weakening the current one.
 
+`export` also owns the crop-review workspace's persisted project-folder format and the mapping from
+stored crop items into snapshot package inputs, so desktop and automation export share one source of
+truth instead of rebuilding item lists from transient UI drag state.
+
 ## Not done here
 
 - **Rendering is still borrowed.** `pdfcraft-render` wraps `hayro` and inspects through `lopdf`

@@ -104,7 +104,7 @@ fn snapshot_marquee_opens_package_export_and_writes_engine_package() {
     h.run_steps(6);
 
     if !pdfcraft_engine::ocr::available() {
-        assert!(dir.join("doc_snapshot_package").exists() == false);
+        assert!(!dir.join("doc_snapshot_package").exists());
         return;
     }
 
@@ -124,5 +124,60 @@ fn snapshot_marquee_opens_package_export_and_writes_engine_package() {
     assert!(report.contains("Desk rectangle"));
     if pdfcraft_engine::ocr::available() {
         assert!(report.contains("\\paragraph{OCR.}"), "{report}");
+    }
+}
+
+#[test]
+fn crop_review_export_uses_stored_items_not_a_transient_marquee() {
+    let dir = dir("crop-review");
+    let mut h = harness(dir.clone());
+    let id = h.state().active_ids().unwrap().1;
+    {
+        let store = h.state_mut().session.crop_review_mut(id).unwrap();
+        store
+            .upsert(pdfcraft_engine::export::CropReviewItem {
+                id: "crop-0002".into(),
+                kind: pdfcraft_engine::export::ExportItemKind::Snapshot,
+                page_number: 2,
+                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 20.0, bottom: 10.0, right: 90.0, top: 60.0 },
+                caption: "Second stored crop".into(),
+                note: Some("second".into()),
+                ocr_text: None,
+                ocr_extracted_at: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            })
+            .unwrap();
+        store
+            .upsert(pdfcraft_engine::export::CropReviewItem {
+                id: "crop-0001".into(),
+                kind: pdfcraft_engine::export::ExportItemKind::Snapshot,
+                page_number: 1,
+                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 10.0, bottom: 20.0, right: 80.0, top: 70.0 },
+                caption: "First stored crop".into(),
+                note: Some("first".into()),
+                ocr_text: None,
+                ocr_extracted_at: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            })
+            .unwrap();
+    }
+    h.state_mut().set_option("dialog", "export-crop-review-package").unwrap();
+    h.run_steps(2);
+    h.get_by_label("Export Crop Review Package");
+    h.get_by_label("Export").click();
+    h.run_steps(6);
+
+    let package = dir.join("doc_crop_review_package");
+    assert!(package.is_dir());
+    let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(package.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["items"][0]["caption"], "First stored crop");
+    assert_eq!(manifest["items"][1]["caption"], "Second stored crop");
+    let report = std::fs::read_to_string(package.join("report.tex")).unwrap();
+    if pdfcraft_engine::ocr::available() {
+        assert!(report.contains("\\paragraph{OCR.}"), "{report}");
+    } else {
+        assert!(!report.contains("\\paragraph{OCR.}"), "{report}");
     }
 }

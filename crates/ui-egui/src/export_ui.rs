@@ -22,6 +22,8 @@ pub enum ExportKind {
     Text,
     /// Export all images: the images pages use, as files.
     AllImages,
+    /// Export the persisted crop-review dataset as a snapshot package.
+    CropReviewPackage,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,6 +76,10 @@ fn export_stem(name: &str) -> String {
 
 fn snapshot_package_target(dir: &Path, stem: &str) -> PathBuf {
     dir.join(format!("{stem}_snapshot_package"))
+}
+
+fn crop_review_package_target(dir: &Path, stem: &str) -> PathBuf {
+    dir.join(format!("{stem}_crop_review_package"))
 }
 
 fn snapshot_body(ui: &mut egui::Ui, t: &Tokens, draft: &mut SnapshotPackageDraft) -> (bool, bool) {
@@ -131,6 +137,31 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: E
             return (apply, cancel);
         }
     }
+    if kind == ExportKind::CropReviewPackage {
+        ui.label(egui::RichText::new(tl!("Export Crop Review Package")).font(theme::semibold(18.0)));
+        ui.add_space(8.0);
+        let count = app.active_ids().and_then(|(_, id)| app.session.get(id)).map(|d| d.crop_review().items().len()).unwrap_or(0);
+        ui.label(
+            egui::RichText::new(crate::i18n::fmt(
+                tl!("Exports {n} stored crop items through the shared snapshot package writer."),
+                &[("n", &count.to_string())],
+            ))
+            .small()
+            .color(t.text_faint),
+        );
+        ui.add_space(12.0);
+        let (mut apply, mut cancel) = (false, false);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let ok = count > 0;
+            if ui.add_enabled_ui(ok, |ui| widgets::pill_button(ui, tl!("Export"), true)).inner.clicked() {
+                apply = true;
+            }
+            if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
+                cancel = true;
+            }
+        });
+        return (apply, cancel);
+    }
 
     let count = app.active_ids().and_then(|(_, id)| app.session.get(id)).map(|d| d.info.pages.len()).unwrap_or(0);
     let d = &mut app.export_draft;
@@ -139,6 +170,7 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: E
             ExportKind::Image => tl!("Export to Image"),
             ExportKind::Text => tl!("Export to Text"),
             ExportKind::AllImages => tl!("Export All Images"),
+            ExportKind::CropReviewPackage => tl!("Export Crop Review Package"),
         })
         .font(theme::semibold(18.0)),
     );
@@ -268,6 +300,7 @@ fn run(
     match kind {
         // Handled above.
         ExportKind::AllImages => String::new(),
+        ExportKind::CropReviewPackage => String::new(),
         ExportKind::Image => {
             for (k, p) in pages.iter().enumerate() {
                 set(k, None);
@@ -358,6 +391,25 @@ fn run_snapshot_package_export(
     set(1, Some(msg));
 }
 
+fn run_crop_review_package_export(input: SnapshotExportPackageInput, stem: String, dir: PathBuf, status: &ExportStatus, lang: crate::i18n::Lang) {
+    crate::i18n::set_current(lang);
+    let total = input.items.len();
+    let set = |done: usize, msg: Option<String>| {
+        if let Ok(mut s) = status.lock() {
+            *s = Some((done, total, msg));
+        }
+    };
+
+    set(0, None);
+    let target = crop_review_package_target(&dir, &stem);
+    let shown = target.display().to_string();
+    let msg = match write_snapshot_export_package(&target, input) {
+        Ok(()) => crate::i18n::fmt(tl!("Exported crop review package to {dir}"), &[("dir", &shown)]),
+        Err(e) => crate::i18n::fmt(tl!("Export stopped: {e}"), &[("e", &e)]),
+    };
+    set(1, Some(msg));
+}
+
 impl PdfCraftApp {
     /// Start exporting the active document with the dialog's settings.
     pub(crate) fn start_export(&mut self, kind: ExportKind) {
@@ -403,6 +455,42 @@ impl PdfCraftApp {
             #[cfg(target_arch = "wasm32")]
             {
                 self.notify_tr("Snapshot package export requires the desktop app");
+            }
+            return;
+        }
+        if kind == ExportKind::CropReviewPackage {
+            let input = match doc.crop_review_snapshot_export_package_input() {
+                Ok(input) => input,
+                Err(e) => {
+                    self.notify_fmt("Export stopped: {e}", &[("e", &e)]);
+                    return;
+                }
+            };
+            let status: ExportStatus = Arc::new(Mutex::new(Some((0, input.items.len(), None))));
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let start = move |app: &mut Self, dir: PathBuf, inline: bool| {
+                    let st = status.clone();
+                    let lang = crate::i18n::current();
+                    let work = move || run_crop_review_package_export(input, stem, dir, &st, lang);
+                    if inline {
+                        work();
+                    } else {
+                        std::thread::Builder::new().name("pdfcraft-crop-review-export".into()).spawn(work).ok();
+                    }
+                    app.export_status = Some(status);
+                };
+                match self.export_dir_override.clone() {
+                    Some(d) => start(self, d.into(), true),
+                    None => {
+                        let dialog = rfd::AsyncFileDialog::new().set_title(tl!("Choose a folder for the exported files").to_string());
+                        self.ask_one(crate::pickers::Ask::Folder(dialog), None, move |app, dir| start(app, dir, false));
+                    }
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.notify_tr("Crop review package export requires the desktop app");
             }
             return;
         }

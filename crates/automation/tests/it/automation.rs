@@ -824,6 +824,62 @@ fn snapshot_package_export_keeps_request_order_for_multiple_items() {
 }
 
 #[test]
+fn crop_review_package_export_through_tools() {
+    let dir = workdir("crop-review-package");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    {
+        let store = a.session_mut().crop_review_mut(pdfcraft_engine::DocId(doc)).unwrap();
+        store
+            .upsert(pdfcraft_engine::export::CropReviewItem {
+                id: "crop-0002".into(),
+                kind: pdfcraft_engine::export::ExportItemKind::Snapshot,
+                page_number: 2,
+                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 20.0, bottom: 40.0, right: 80.0, top: 120.0 },
+                caption: "Second page".into(),
+                note: Some("Later in canonical order".into()),
+                ocr_text: None,
+                ocr_extracted_at: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+        store
+            .upsert(pdfcraft_engine::export::CropReviewItem {
+                id: "crop-0001".into(),
+                kind: pdfcraft_engine::export::ExportItemKind::Snapshot,
+                page_number: 1,
+                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 10.0, bottom: 60.0, right: 90.0, top: 140.0 },
+                caption: "First page".into(),
+                note: Some("First in canonical order".into()),
+                ocr_text: None,
+                ocr_extracted_at: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+    }
+    let args = json!({ "doc": doc, "out": "package" });
+    if !pdfcraft_engine::ocr::available() {
+        assert!(matches!(
+            a.call("doc_export_crop_review_package", &args),
+            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
+        ));
+        return;
+    }
+    let result = ok(&mut a, "doc_export_crop_review_package", args);
+    assert_eq!(result["count"], 2);
+    assert_eq!(result["items"][0]["id"], "item_1");
+    assert_eq!(result["items"][0]["page"], 1);
+    assert_eq!(result["items"][1]["id"], "item_2");
+    assert_eq!(result["items"][1]["page"], 2);
+
+    let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("package/manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["items"][0]["caption"], "First page");
+    assert_eq!(manifest["items"][1]["caption"], "Second page");
+}
+
+#[test]
 fn snapshot_package_export_refuses_invalid_rectangles_and_confined_paths() {
     let dir = workdir("snapshot-package-errors");
     let mut a = auto(&dir);
@@ -878,6 +934,14 @@ fn snapshot_package_tool_schema_describes_rectangles_and_metadata() {
     assert!(item["properties"]["rect"]["description"].as_str().is_some_and(|s| s.contains("top-left")));
     assert!(item["properties"]["caption"]["description"].as_str().is_some_and(|s| s.contains("plain-text")));
     assert!(item["properties"]["note"]["description"].as_str().is_some_and(|s| s.contains("plain-text")));
+}
+
+#[test]
+fn crop_review_package_tool_schema_requires_only_doc_and_out() {
+    let tool = tools().into_iter().find(|t| t.name == "doc_export_crop_review_package").unwrap();
+    assert!(!tool.read_only);
+    assert!(tool.destructive);
+    assert_eq!(tool.input_schema["required"], json!(["doc", "out"]));
 }
 
 #[test]
@@ -9312,3 +9376,4 @@ fn page_render_draws_stamps_without_an_appearance() {
     let grey = custom.iter().filter(|p| p[0].abs_diff(p[1]) < 24 && p[1].abs_diff(p[2]) < 24).count();
     assert!(grey > 100 && grey == custom.len(), "an unknown name is a grey placeholder: {grey} of {}", custom.len());
 }
+use chrono::Utc;

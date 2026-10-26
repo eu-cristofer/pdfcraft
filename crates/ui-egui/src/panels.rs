@@ -1,5 +1,5 @@
 //! Left tool panel (All tools + tool sub-panels, generated from the engine catalogue) and the
-//! right-hand panels (Comments, Bookmarks, Pages, Fields, Layers, Attachments).
+//! right-hand panels (Comments, Bookmarks, Pages, Crops, Fields, Layers, Attachments).
 
 use egui::{Align, Align2, Color32, CornerRadius, Layout, Rect, Sense, Stroke, pos2, vec2};
 use pdfcraft_engine::catalog::{self, Availability, TOOL_GROUPS, ToolGroup, ToolItem};
@@ -670,6 +670,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let mut bm_expand: Option<usize> = None;
     let mut panel_edit: Option<pdfcraft_engine::Edit> = None;
     let mut field_properties = None;
+    let mut metadata_edit: Option<crate::metadata_panel::MetadataEdit> = None;
     let mut panel_command: Option<&'static str> = None;
     let mut sig_action: Option<crate::sign_ui::PanelAction> = None;
     let mut a11y_action: Option<crate::a11y_ui::PanelAction> = None;
@@ -699,6 +700,8 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     RightPanel::Comments => ("Comments", Some(crate::comments_panel::count(info))),
                     RightPanel::Bookmarks => ("Bookmarks", None),
                     RightPanel::Pages => ("Pages", Some(info.pages.len())),
+                    RightPanel::Crops => ("Crops", Some(doc.ordered_crop_review_items().len())),
+                    RightPanel::Metadata => ("Metadata", view.crop_review.selected.as_ref().map(|_| 1)),
                     RightPanel::Fields => ("Fields", Some(info.fields.len())),
                     RightPanel::Layers => ("Layers", Some(info.layers.len())),
                     RightPanel::Attachments => ("Attachments", Some(info.attachments.len())),
@@ -859,6 +862,10 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         }
                     }
                     RightPanel::Pages => pages(ui, &t, info, view, modal, bm_editable, &mut nav),
+                    RightPanel::Crops => crate::crops_panel::show(ui, &t, doc, view, &mut nav),
+                    RightPanel::Metadata => {
+                        metadata_edit = crate::metadata_panel::show(ui, &t, doc, view);
+                    }
                     RightPanel::Fields => field_properties = fields(ui, &t, info, &doc.form, preparing, &mut view.prepare, &mut nav, &mut panel_edit),
                     RightPanel::Layers => {
                         if info.layers.is_empty() {
@@ -1017,6 +1024,15 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     if let Some((name, widget)) = field_properties {
         app.open_field_props(&name, widget);
     }
+    if let Some(edit) = metadata_edit
+        && let Ok(store) = app.session.crop_review_mut(id)
+        && let Some(previous) = store.get(&edit.id).cloned()
+    {
+        let mut updated = previous;
+        updated.caption = edit.caption;
+        updated.note = edit.note;
+        let _ = store.upsert(updated);
+    }
     if let Some(c) = panel_command {
         app.run_command(c);
     }
@@ -1087,7 +1103,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     }
 }
 
-fn empty(ui: &mut egui::Ui, t: &Tokens, icon: &str, text: &str) {
+pub(crate) fn empty(ui: &mut egui::Ui, t: &Tokens, icon: &str, text: &str) {
     ui.add_space(40.0);
     ui.vertical_centered(|ui| {
         ui.add(icons::image(icon, 36.0, t.text_faint));

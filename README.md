@@ -425,11 +425,15 @@ Logs, environment variables and other development notes are in [docs/development
 ## What's next
 
 Active implementation plans live under `docs/changes/`; the current queued project is
-[`003_export-flow`](docs/changes/003_export-flow/README.md).
+[`004_crop-review-workspace`](docs/changes/004_crop-review-workspace/README.md).
 
 Snapshot export v1 is now specified in [`docs/snapshot-export-spec.md`](docs/snapshot-export-spec.md):
 canonical `manifest.json`, deterministic `report.tex`, `source.pdf`, and PNG evidence crops from one
 shared ordered item list.
+
+Crop review is now a separate persistent workspace from `Edit -> Take a snapshot`: stored crop items
+can be reviewed, saved as a self-contained project folder, and exported as snapshot packages from
+that persisted dataset, while the original snapshot tool remains a copy-oriented transient feature.
 
 PdfCraft is young and moving fast. The aim is a workbench where you can view, organize, annotate, fill, sign and edit PDFs, for professional and everyday workflows.
 
