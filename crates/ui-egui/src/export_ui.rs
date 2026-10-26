@@ -141,7 +141,14 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: E
         ui.label(egui::RichText::new(tl!("Export Crop Review Package")).font(theme::semibold(18.0)));
         ui.add_space(8.0);
         let count = app.active_ids().and_then(|(_, id)| app.session.get(id)).map(|d| d.crop_review().items().len()).unwrap_or(0);
-        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Exports {n} stored crop items through the shared snapshot package writer."), &[("n", &count.to_string())])).small().color(t.text_faint));
+        ui.label(
+            egui::RichText::new(crate::i18n::fmt(
+                tl!("Exports {n} stored crop items through the shared snapshot package writer."),
+                &[("n", &count.to_string())],
+            ))
+            .small()
+            .color(t.text_faint),
+        );
         ui.add_space(12.0);
         let (mut apply, mut cancel) = (false, false);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

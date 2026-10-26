@@ -203,15 +203,9 @@ impl Document {
     pub fn crop_review_snapshot_export_items(&self) -> Result<Vec<SnapshotExportItem>, String> {
         let mut items = Vec::new();
         for (order, crop) in self.crop_review.ordered_items(&self.info.pages).into_iter().enumerate() {
-            let page_index = crop
-                .page_number
-                .checked_sub(1)
-                .ok_or_else(|| format!("crop {} has invalid page number {}", crop.id, crop.page_number))?;
-            let page = self
-                .info
-                .pages
-                .get(page_index)
-                .ok_or_else(|| format!("crop {} refers to missing page {}", crop.id, crop.page_number))?;
+            let page_index =
+                crop.page_number.checked_sub(1).ok_or_else(|| format!("crop {} has invalid page number {}", crop.id, crop.page_number))?;
+            let page = self.info.pages.get(page_index).ok_or_else(|| format!("crop {} refers to missing page {}", crop.id, crop.page_number))?;
             items.push(crop.export_item_input(order, page)?);
         }
         normalize_snapshot_export_items(self.info.pages.len(), items)
@@ -319,16 +313,10 @@ impl CropReviewProjectJson {
 
     fn validate(&self) -> Result<(), String> {
         if self.schema_version != CROP_REVIEW_PROJECT_SCHEMA_VERSION {
-            return Err(format!(
-                "crop review project schema version {} is not supported",
-                self.schema_version
-            ));
+            return Err(format!("crop review project schema version {} is not supported", self.schema_version));
         }
         if self.source_pdf != CROP_REVIEW_PROJECT_SOURCE_PDF_PATH {
-            return Err(format!(
-                "crop review project source_pdf must be {}, got {}",
-                CROP_REVIEW_PROJECT_SOURCE_PDF_PATH, self.source_pdf
-            ));
+            return Err(format!("crop review project source_pdf must be {}, got {}", CROP_REVIEW_PROJECT_SOURCE_PDF_PATH, self.source_pdf));
         }
         for crop in &self.crops {
             crop.validate()?;
@@ -367,12 +355,7 @@ impl CropReviewProjectCropJson {
             id: self.id,
             kind,
             page_number: self.page_number,
-            rect_pdf: CropPdfRect {
-                left: self.rect_pdf.left,
-                bottom: self.rect_pdf.bottom,
-                right: self.rect_pdf.right,
-                top: self.rect_pdf.top,
-            },
+            rect_pdf: CropPdfRect { left: self.rect_pdf.left, bottom: self.rect_pdf.bottom, right: self.rect_pdf.right, top: self.rect_pdf.top },
             caption: self.caption,
             note: self.note,
             ocr_text: self.ocr_text,
@@ -393,12 +376,7 @@ impl CropReviewProjectCropJson {
             id: self.id.clone(),
             kind,
             page_number: self.page_number,
-            rect_pdf: CropPdfRect {
-                left: self.rect_pdf.left,
-                bottom: self.rect_pdf.bottom,
-                right: self.rect_pdf.right,
-                top: self.rect_pdf.top,
-            },
+            rect_pdf: CropPdfRect { left: self.rect_pdf.left, bottom: self.rect_pdf.bottom, right: self.rect_pdf.right, top: self.rect_pdf.top },
             caption: self.caption.clone(),
             note: self.note.clone(),
             ocr_text: self.ocr_text.clone(),
@@ -1066,10 +1044,12 @@ fn write_crop_review_project_file(root: &Path, relative: &str, bytes: &[u8]) -> 
 
 pub fn crop_review_project_json(project: &CropReviewProject) -> Result<String, String> {
     let json = CropReviewProjectJson::from_project(project);
-    serde_json::to_string_pretty(&json).map(|mut out| {
-        out.push('\n');
-        out
-    }).map_err(|e| format!("failed to serialize crop review project JSON: {e}"))
+    serde_json::to_string_pretty(&json)
+        .map(|mut out| {
+            out.push('\n');
+            out
+        })
+        .map_err(|e| format!("failed to serialize crop review project JSON: {e}"))
 }
 
 pub fn write_crop_review_project(target: &Path, source_pdf_bytes: Arc<Vec<u8>>, crops: Vec<CropReviewItem>) -> Result<(), String> {
@@ -1098,8 +1078,7 @@ pub fn write_crop_review_project(target: &Path, source_pdf_bytes: Arc<Vec<u8>>, 
 pub fn load_crop_review_project(root: &Path) -> Result<CropReviewProject, String> {
     let json_path = resolve_crop_review_project_path(root, CROP_REVIEW_PROJECT_JSON_PATH)?;
     let json_text = std::fs::read_to_string(&json_path).map_err(|e| format!("could not read {}: {e}", json_path.display()))?;
-    let json: CropReviewProjectJson =
-        serde_json::from_str(&json_text).map_err(|e| format!("crop review project JSON is not valid: {e}"))?;
+    let json: CropReviewProjectJson = serde_json::from_str(&json_text).map_err(|e| format!("crop review project JSON is not valid: {e}"))?;
     json.validate()?;
 
     let source_path = resolve_crop_review_project_path(root, &json.source_pdf)?;
@@ -1859,10 +1838,8 @@ mod crop_review_project_tests {
         let dir = TestDir::new("round-trip");
         let target = dir.child("project");
         let source_pdf = Arc::new(crate::tests::fixture(2));
-        let crops = vec![
-            crop("crop-0001", 1, "Resumo", Some("Observacao com acento"), Some("ocr 日本語")),
-            crop("crop-0002", 2, "第二", Some("nota"), None),
-        ];
+        let crops =
+            vec![crop("crop-0001", 1, "Resumo", Some("Observacao com acento"), Some("ocr 日本語")), crop("crop-0002", 2, "第二", Some("nota"), None)];
 
         write_crop_review_project(&target, source_pdf.clone(), crops.clone()).unwrap();
         let loaded = load_crop_review_project(&target).unwrap();
@@ -1910,11 +1887,8 @@ mod crop_review_project_tests {
         let target = dir.child("project");
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join("source.pdf"), crate::tests::fixture(1)).unwrap();
-        std::fs::write(
-            target.join("project.json"),
-            b"{\n  \"schema_version\": 1,\n  \"source_pdf\": \"../outside.pdf\",\n  \"crops\": []\n}\n",
-        )
-        .unwrap();
+        std::fs::write(target.join("project.json"), b"{\n  \"schema_version\": 1,\n  \"source_pdf\": \"../outside.pdf\",\n  \"crops\": []\n}\n")
+            .unwrap();
 
         let err = load_crop_review_project(&target).unwrap_err();
         assert!(err.contains("source_pdf must be source.pdf"), "{err}");
@@ -1926,11 +1900,7 @@ mod crop_review_project_tests {
         let target = dir.child("project");
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join("source.pdf"), crate::tests::fixture(1)).unwrap();
-        std::fs::write(
-            target.join("project.json"),
-            b"{\n  \"schema_version\": 2,\n  \"source_pdf\": \"source.pdf\",\n  \"crops\": []\n}\n",
-        )
-        .unwrap();
+        std::fs::write(target.join("project.json"), b"{\n  \"schema_version\": 2,\n  \"source_pdf\": \"source.pdf\",\n  \"crops\": []\n}\n").unwrap();
 
         let err = load_crop_review_project(&target).unwrap_err();
         assert!(err.contains("schema version 2 is not supported"), "{err}");
