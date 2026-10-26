@@ -86,11 +86,9 @@ fn crop_row(h: &Harness<'static, PdfCraftApp>, label: &str) -> egui::Rect {
 }
 
 fn field<'a>(h: &'a Harness<'static, PdfCraftApp>, label: &'a str) -> egui_kittest::Node<'a> {
-    h.query_all_by(|node| {
-        matches!(node.role(), Role::TextInput | Role::MultilineTextInput) && node.label().as_deref() == Some(label)
-    })
-    .next()
-    .unwrap_or_else(|| panic!("no field {label:?}"))
+    h.query_all_by(|node| matches!(node.role(), Role::TextInput | Role::MultilineTextInput) && node.label().as_deref() == Some(label))
+        .next()
+        .unwrap_or_else(|| panic!("no field {label:?}"))
 }
 
 fn crop_center(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: CropPdfRect) -> Pos2 {

@@ -3802,7 +3802,14 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 view.links.context = Some((i, l.index));
             }
             let on_crop_review = crate::crops_panel::page_input(&resp, doc, &xf, &ptr, i, view);
-            let consumed = on_objects || on_edit_text || on_link || on_content || boxing || on_field || on_crop_review || comments::page_input(ui, &resp, &pcx, view);
+            let consumed = on_objects
+                || on_edit_text
+                || on_link
+                || on_content
+                || boxing
+                || on_field
+                || on_crop_review
+                || comments::page_input(ui, &resp, &pcx, view);
 
             let preview_target =
                 (matches!(tool, QuickTool::Select | QuickTool::Fill(_)) && !comments_hidden).then_some(view.comments.selected).flatten();

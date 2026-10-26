@@ -1,9 +1,6 @@
 //! The Metadata panel for the currently selected crop-review item.
 
-use pdfcraft_engine::{
-    Document,
-    export::ExportItemKind,
-};
+use pdfcraft_engine::{Document, export::ExportItemKind};
 
 use crate::{
     canvas::DocView,
@@ -62,8 +59,16 @@ pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut Doc
         }
 
         ui.add_space(6.0);
-        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Kind: {kind}"), &[("kind", kind_label(item.kind))])).font(theme::regular(11.0)).color(t.text_faint));
-        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Page: {page}"), &[("page", &item.page_number.to_string())])).font(theme::regular(11.0)).color(t.text_faint));
+        ui.label(
+            egui::RichText::new(crate::i18n::fmt(tl!("Kind: {kind}"), &[("kind", kind_label(item.kind))]))
+                .font(theme::regular(11.0))
+                .color(t.text_faint),
+        );
+        ui.label(
+            egui::RichText::new(crate::i18n::fmt(tl!("Page: {page}"), &[("page", &item.page_number.to_string())]))
+                .font(theme::regular(11.0))
+                .color(t.text_faint),
+        );
     });
 
     edit

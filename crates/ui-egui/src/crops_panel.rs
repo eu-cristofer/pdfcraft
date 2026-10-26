@@ -6,13 +6,13 @@ use pdfcraft_engine::{
     export::{CropReviewItem, ExportItemKind},
 };
 
+use crate::icons;
+use crate::theme::{self, Tokens};
 use crate::{
     canvas::{DocView, PageXform},
     page_pointer::PagePointer,
     panels::Nav,
 };
-use crate::icons;
-use crate::theme::{self, Tokens};
 
 pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut DocView, nav: &mut Option<Nav>) {
     ui.horizontal(|ui| {
@@ -47,9 +47,7 @@ pub(crate) fn page_input(resp: &egui::Response, doc: &Document, xf: &PageXform, 
     }
 
     let Some(pointer) = ptr.pos.filter(|p| xf.rect.contains(*p)) else { return false };
-    let hit = page_items(doc, page)
-        .filter(|item| xf.user_rect(&doc.info, page, user_rect(item)).expand(4.0).contains(pointer))
-        .last();
+    let hit = page_items(doc, page).filter(|item| xf.user_rect(&doc.info, page, user_rect(item)).expand(4.0).contains(pointer)).last();
 
     if resp.clicked()
         && let Some(item) = hit
