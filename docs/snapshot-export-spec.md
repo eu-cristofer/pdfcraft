@@ -553,3 +553,16 @@ The v1 snapshot export package is intentionally strict:
 - fail-closed validation behavior
 
 That strictness is the mechanism that keeps the format reproducible now and expandable later.
+
+## Contributor notes
+
+For future contributors extending this feature:
+
+- v1 is intentionally closed over `kind = "snapshot"`. Do not add new evidence kinds by reusing
+  snapshot fields with new semantics.
+- Add any future evidence kind through a new explicit item kind, explicit validation, and a
+  versioned contract update.
+- Keep `manifest.json` canonical. New outputs should derive from the normalized ordered item list,
+  not create a second source of truth.
+- Preserve the distinction between `source.pdf` as working-file bytes and derived display-equivalent
+  raster outputs.
