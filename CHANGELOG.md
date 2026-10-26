@@ -13,6 +13,7 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Added** a normalized snapshot export item model in `crates/engine/src/export.rs` — deterministic ordering, `item_N` ID assignment, canonical `evidence/<id>.png` paths, and validation for pages, rectangles, and package-relative paths.
 - **Specified** `docs/snapshot-export-spec.md` — v1 snapshot export contract with canonical `manifest.json`, deterministic IDs/paths, explicit coordinate and `source.pdf` semantics, validation rules, and worked examples.
 - **Documented** snapshot-export discovery decisions in `docs/snapshot-export-discovery.md` — current coordinate/ordering/text-trust/source-PDF/render semantics that later sprints will implement against.
 - **Registered** sprint project `docs/changes/001_snapshot-export-contract/` — phased plan for a stable, extensible snapshot export contract with canonical manifest, deterministic LaTeX output, and package validation.

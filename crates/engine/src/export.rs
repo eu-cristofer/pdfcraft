@@ -4,6 +4,8 @@
 //! text, from a
 //! document's working file (so unsaved edits and hidden layers are respected, as on screen).
 
+use std::path::{Component, Path};
+
 use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind};
 
 use crate::Document;
@@ -24,6 +26,66 @@ pub struct ExportSource {
     pub pages: usize,
     /// Each page's displayed size in points (after `/Rotate` and `/UserUnit`).
     pub sizes: Vec<(f32, f32)>,
+}
+
+/// A snapshot rectangle in the export contract's displayed-page coordinate space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExportRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl ExportRect {
+    fn validate(self) -> Result<Self, String> {
+        if !self.x.is_finite() || !self.y.is_finite() {
+            return Err("snapshot rectangle coordinates must be finite".into());
+        }
+        if !self.width.is_finite() || !self.height.is_finite() || self.width <= 0.0 || self.height <= 0.0 {
+            return Err("snapshot rectangle size must be finite and positive".into());
+        }
+        Ok(self)
+    }
+}
+
+/// Raw snapshot export data before canonical ordering, IDs and image paths are assigned.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SnapshotExportItemInput {
+    pub order: usize,
+    /// 1-based page number in displayed-page space.
+    pub page: usize,
+    pub rect: ExportRect,
+    pub caption: String,
+    pub note: Option<String>,
+}
+
+/// The export package item kind. v1 only emits snapshots, but later package artifacts consume
+/// this shared ordered item model directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportItemKind {
+    Snapshot,
+}
+
+impl ExportItemKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExportItemKind::Snapshot => "snapshot",
+        }
+    }
+}
+
+/// One normalized item in the canonical export order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SnapshotExportItem {
+    pub id: String,
+    pub kind: ExportItemKind,
+    /// 1-based page number in displayed-page space.
+    pub page: usize,
+    pub rect: ExportRect,
+    pub image_path: String,
+    pub caption: String,
+    pub note: Option<String>,
 }
 
 impl Document {
@@ -54,6 +116,72 @@ pub fn extract_images(src: &ExportSource, pages: &[usize], min_side: u32) -> Res
 pub fn image_file_name(stem: &str, image: &pdfcraft_create::ExtractedImage, index: usize, page_count: usize) -> String {
     let width = page_count.max(1).to_string().len();
     format!("{stem}_Page_{:0width$}_Image_{index:04}.{}", image.page + 1, image.extension)
+}
+
+fn snapshot_export_item_id(index: usize) -> Result<String, String> {
+    let position = index.checked_add(1).ok_or_else(|| "too many export items".to_string())?;
+    Ok(format!("item_{position}"))
+}
+
+fn snapshot_export_image_path(id: &str) -> Result<String, String> {
+    normalize_package_relative_path(&format!("evidence/{id}.png"))
+}
+
+fn validate_snapshot_export_page(page_count: usize, page: usize) -> Result<(), String> {
+    if page == 0 || page > page_count { Err(format!("page {page} does not exist")) } else { Ok(()) }
+}
+
+/// Normalizes one package-internal relative path to a canonical `/`-separated form.
+pub fn normalize_package_relative_path(path: &str) -> Result<String, String> {
+    if path.is_empty() {
+        return Err("package path is empty".into());
+    }
+    if path.contains('\\') {
+        return Err("package path must use '/' separators".into());
+    }
+    if Path::new(path).is_absolute() {
+        return Err("package path must be relative".into());
+    }
+
+    let mut parts = Vec::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => return Err("package path cannot escape the package root".into()),
+            Component::RootDir | Component::Prefix(_) => return Err("package path must be relative".into()),
+            Component::Normal(part) => parts.push(part.to_str().ok_or_else(|| "package path must be valid UTF-8".to_string())?),
+        }
+    }
+
+    if parts.is_empty() {
+        return Err("package path is empty".into());
+    }
+
+    Ok(parts.join("/"))
+}
+
+/// Builds the canonical ordered list that later manifest and LaTeX generation consume.
+pub fn normalize_snapshot_export_items(page_count: usize, items: Vec<SnapshotExportItemInput>) -> Result<Vec<SnapshotExportItem>, String> {
+    let mut ordered = items.into_iter().enumerate().collect::<Vec<_>>();
+    ordered.sort_by_key(|(original_index, item)| (item.order, *original_index));
+
+    let mut normalized = Vec::with_capacity(ordered.len());
+    for (index, (_, item)) in ordered.into_iter().enumerate() {
+        validate_snapshot_export_page(page_count, item.page)?;
+        let rect = item.rect.validate()?;
+        let id = snapshot_export_item_id(index)?;
+        let image_path = snapshot_export_image_path(&id)?;
+        normalized.push(SnapshotExportItem {
+            id,
+            kind: ExportItemKind::Snapshot,
+            page: item.page,
+            rect,
+            image_path,
+            caption: item.caption,
+            note: item.note,
+        });
+    }
+    Ok(normalized)
 }
 
 impl Exporter {
@@ -293,6 +421,78 @@ mod image_name_tests {
         assert_eq!(image_file_name("doc", &image(6), 3, 120), "doc_Page_007_Image_0003.png");
         assert_eq!(image_file_name("doc", &image(119), 4, 120), "doc_Page_120_Image_0004.png");
         assert_eq!(image_file_name("doc", &image(0), 1, 0), "doc_Page_1_Image_0001.png");
+    }
+}
+
+#[cfg(test)]
+mod snapshot_export_tests {
+    use super::{ExportItemKind, ExportRect, SnapshotExportItemInput, normalize_package_relative_path, normalize_snapshot_export_items};
+
+    fn input(order: usize, page: usize, caption: &str) -> SnapshotExportItemInput {
+        SnapshotExportItemInput { order, page, rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 }, caption: caption.into(), note: None }
+    }
+
+    #[test]
+    fn snapshot_items_follow_explicit_order_and_preserve_ties() {
+        let items = normalize_snapshot_export_items(3, vec![input(30, 3, "third"), input(10, 2, "first"), input(10, 1, "second")]).unwrap();
+
+        assert_eq!(items.iter().map(|item| item.caption.as_str()).collect::<Vec<_>>(), vec!["first", "second", "third"]);
+        assert_eq!(items.iter().map(|item| item.page).collect::<Vec<_>>(), vec![2, 1, 3]);
+    }
+
+    #[test]
+    fn snapshot_ids_and_image_paths_derive_from_the_canonical_order() {
+        let items = normalize_snapshot_export_items(2, vec![input(20, 1, "second"), input(10, 2, "first")]).unwrap();
+
+        assert_eq!(items.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), vec!["item_1", "item_2"]);
+        assert_eq!(items.iter().map(|item| item.image_path.as_str()).collect::<Vec<_>>(), vec!["evidence/item_1.png", "evidence/item_2.png"]);
+        assert_eq!(items.iter().map(|item| item.kind).collect::<Vec<_>>(), vec![ExportItemKind::Snapshot, ExportItemKind::Snapshot]);
+        assert_eq!(items.iter().map(|item| item.kind.as_str()).collect::<Vec<_>>(), vec!["snapshot", "snapshot"]);
+    }
+
+    #[test]
+    fn package_paths_are_normalized_to_relative_forward_slash_paths() {
+        assert_eq!(normalize_package_relative_path("./evidence//item_1.png"), Ok("evidence/item_1.png".into()));
+        assert_eq!(normalize_package_relative_path("nested/./dir///item_2.png"), Ok("nested/dir/item_2.png".into()));
+    }
+
+    #[test]
+    fn package_paths_reject_invalid_or_escaping_inputs() {
+        for path in ["", ".", "/evidence/item_1.png", "../evidence/item_1.png", "evidence/../item_1.png", r"evidence\item_1.png"] {
+            assert!(normalize_package_relative_path(path).is_err(), "{path}");
+        }
+    }
+
+    #[test]
+    fn invalid_pages_and_rectangles_fail_through_the_normal_result_path() {
+        let bad_page = normalize_snapshot_export_items(2, vec![input(0, 0, "bad page")]).unwrap_err();
+        assert_eq!(bad_page, "page 0 does not exist");
+
+        let bad_rect = normalize_snapshot_export_items(
+            2,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 10.0, y: 20.0, width: 0.0, height: 40.0 },
+                caption: "bad rect".into(),
+                note: None,
+            }],
+        )
+        .unwrap_err();
+        assert_eq!(bad_rect, "snapshot rectangle size must be finite and positive");
+
+        let non_finite = normalize_snapshot_export_items(
+            2,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: f32::NAN, y: 20.0, width: 30.0, height: 40.0 },
+                caption: "bad rect".into(),
+                note: None,
+            }],
+        )
+        .unwrap_err();
+        assert_eq!(non_finite, "snapshot rectangle coordinates must be finite");
     }
 }
 
