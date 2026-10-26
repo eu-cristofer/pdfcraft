@@ -26,5 +26,5 @@ Status: active
 - [x] [Sprint 2 — Spec hardening and examples](./sprint-2.md) — done 2026-10-25
 - [x] [Sprint 3 — Internal export model and ordering](./sprint-3.md) — done 2026-10-25
 - [x] [Sprint 4 — Manifest and LaTeX generation core](./sprint-4.md) — done 2026-10-25
-- [ ] [Sprint 5 — Raster/source export and validation](./sprint-5.md)
+- [x] [Sprint 5 — Raster/source export and validation](./sprint-5.md) — done 2026-10-25
 - [ ] [Sprint 6 — Tests, docs, and extensibility guardrails](./sprint-6.md)

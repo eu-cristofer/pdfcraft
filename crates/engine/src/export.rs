@@ -4,9 +4,10 @@
 //! text, from a
 //! document's working file (so unsaved edits and hidden layers are respected, as on screen).
 
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
-use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind};
+use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind, Tile};
 
 use crate::Document;
 
@@ -89,6 +90,16 @@ pub struct SnapshotExportItem {
     pub image_path: String,
     pub caption: String,
     pub note: Option<String>,
+}
+
+/// End-to-end inputs for writing one snapshot export package.
+#[derive(Clone)]
+pub struct SnapshotExportPackageInput {
+    pub items: Vec<SnapshotExportItem>,
+    /// Display-equivalent bytes/config for crop rendering.
+    pub render_source: ExportSource,
+    /// Working-file bytes for `source.pdf`.
+    pub source_pdf_bytes: Arc<Vec<u8>>,
 }
 
 impl Document {
@@ -189,6 +200,9 @@ pub fn normalize_snapshot_export_items(page_count: usize, items: Vec<SnapshotExp
 
 const SNAPSHOT_EXPORT_PACKAGE_KIND: &str = "pdfcraft.snapshot_export";
 const SNAPSHOT_EXPORT_MANIFEST_VERSION: &str = "1.0";
+const SNAPSHOT_EXPORT_MANIFEST_PATH: &str = "manifest.json";
+const SNAPSHOT_EXPORT_REPORT_PATH: &str = "report.tex";
+const SNAPSHOT_EXPORT_EVIDENCE_DIR: &str = "evidence";
 const SNAPSHOT_EXPORT_SOURCE_PDF_PATH: &str = "source.pdf";
 const SNAPSHOT_EXPORT_SOURCE_PDF_STATE: &str = "working-copy";
 const SNAPSHOT_EXPORT_COORDINATE_PAGE_ORIGIN: &str = "top-left";
@@ -199,17 +213,44 @@ const SNAPSHOT_EXPORT_RENDERING_SOURCE: &str = "display-equivalent";
 const SNAPSHOT_EXPORT_RENDERING_IMAGE_FORMAT: &str = "png";
 const SNAPSHOT_EXPORT_PIXELS_PER_POINT: f32 = 2.0;
 
-fn snapshot_export_image_dimension(points: f32) -> Result<u32, String> {
-    let pixels = (f64::from(points) * f64::from(SNAPSHOT_EXPORT_PIXELS_PER_POINT)).round();
-    if !pixels.is_finite() || pixels <= 0.0 || pixels > f64::from(u32::MAX) {
+fn snapshot_export_tile_axis(start: f32, span: f32) -> Result<(u32, u32), String> {
+    if !start.is_finite() || !span.is_finite() {
+        return Err("snapshot rectangle coordinates must be finite".into());
+    }
+    let origin = (f64::from(start) * f64::from(SNAPSHOT_EXPORT_PIXELS_PER_POINT)).floor();
+    let end = (f64::from(start + span) * f64::from(SNAPSHOT_EXPORT_PIXELS_PER_POINT)).ceil();
+    if !origin.is_finite() || !end.is_finite() || origin < 0.0 || end <= origin || end > f64::from(u32::MAX) {
         return Err("snapshot image dimensions are out of range".into());
     }
-    Ok(pixels as u32)
+    let origin = origin as u32;
+    let end = end as u32;
+    Ok((origin, end - origin))
+}
+
+fn snapshot_export_render_tile(rect: ExportRect) -> Result<Tile, String> {
+    let rect = rect.validate()?;
+    let (x, w) = snapshot_export_tile_axis(rect.x, rect.width)?;
+    let (y, h) = snapshot_export_tile_axis(rect.y, rect.height)?;
+    Ok(Tile { x, y, w, h })
 }
 
 fn snapshot_export_image_size(rect: ExportRect) -> Result<(u32, u32), String> {
+    let tile = snapshot_export_render_tile(rect)?;
+    Ok((tile.w, tile.h))
+}
+
+fn validate_snapshot_export_rect_on_page(page_size: (f32, f32), rect: ExportRect) -> Result<(), String> {
     let rect = rect.validate()?;
-    Ok((snapshot_export_image_dimension(rect.width)?, snapshot_export_image_dimension(rect.height)?))
+    let right = rect.x + rect.width;
+    let bottom = rect.y + rect.height;
+    let epsilon = 0.001;
+    if right > page_size.0 + epsilon || bottom > page_size.1 + epsilon {
+        return Err(format!(
+            "snapshot rectangle {} {} {} {} exceeds page bounds {} {}",
+            rect.x, rect.y, rect.width, rect.height, page_size.0, page_size.1
+        ));
+    }
+    Ok(())
 }
 
 fn validate_snapshot_export_contract_items(items: &[SnapshotExportItem]) -> Result<Vec<(u32, u32)>, String> {
@@ -402,6 +443,267 @@ pub fn snapshot_export_report_tex(items: &[SnapshotExportItem]) -> Result<String
     }
 
     Ok(out)
+}
+
+#[derive(Clone, Debug, Default)]
+struct SnapshotExportWriteHooks {
+    #[cfg(test)]
+    fail_before_write_rel_path: Option<String>,
+}
+
+impl SnapshotExportWriteHooks {
+    fn maybe_fail_before_write(&self, _relative: &str) -> Result<(), String> {
+        #[cfg(test)]
+        if self.fail_before_write_rel_path.as_deref() == Some(_relative) {
+            return Err(format!("injected snapshot export write failure at {_relative}"));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    #[cfg(test)]
+    fn fail_before_write(relative: &str) -> Self {
+        Self { fail_before_write_rel_path: Some(relative.to_owned()) }
+    }
+}
+
+fn validate_snapshot_export_package_input(input: &SnapshotExportPackageInput) -> Result<(), String> {
+    if input.render_source.pages != input.render_source.sizes.len() {
+        return Err("snapshot export render source page metadata is incomplete".into());
+    }
+    if input.source_pdf_bytes.is_empty() {
+        return Err("snapshot export source.pdf bytes are empty".into());
+    }
+    validate_snapshot_export_contract_items(&input.items)?;
+    for item in &input.items {
+        validate_snapshot_export_page(input.render_source.pages, item.page)?;
+        let page_size = *input.render_source.sizes.get(item.page - 1).ok_or_else(|| format!("page {} display size is not available", item.page))?;
+        validate_snapshot_export_rect_on_page(page_size, item.rect)?;
+    }
+    Ok(())
+}
+
+fn snapshot_export_stage_prefix(name: &str) -> String {
+    format!(".{name}.snapshot-export-{}-", std::process::id())
+}
+
+fn create_snapshot_export_staging_dir(target: &Path) -> Result<PathBuf, String> {
+    let parent = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let name = target.file_name().ok_or("snapshot export target must name a directory")?.to_string_lossy().into_owned();
+
+    if target.exists() {
+        return Err(format!("snapshot export target already exists: {}", target.display()));
+    }
+
+    let prefix = snapshot_export_stage_prefix(&name);
+    for attempt in 0..128 {
+        let candidate = parent.join(format!("{prefix}{attempt}"));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(format!("could not create snapshot export staging directory {}: {err}", candidate.display())),
+        }
+    }
+
+    Err(format!("could not create a free staging directory beside {}", target.display()))
+}
+
+fn resolve_snapshot_export_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let relative = normalize_package_relative_path(relative)?;
+    let mut path = root.to_path_buf();
+    for part in relative.split('/') {
+        path.push(part);
+    }
+    Ok(path)
+}
+
+fn write_snapshot_export_file(root: &Path, relative: &str, bytes: &[u8], hooks: &SnapshotExportWriteHooks) -> Result<(), String> {
+    let path = resolve_snapshot_export_path(root, relative)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+    hooks.maybe_fail_before_write(relative)?;
+    std::fs::write(&path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))
+}
+
+fn render_snapshot_export_item_png(renderer: &mut PageRenderer, source: &ExportSource, item: &SnapshotExportItem) -> Result<Vec<u8>, String> {
+    validate_snapshot_export_page(source.pages, item.page)?;
+    let page_size = *source.sizes.get(item.page - 1).ok_or_else(|| format!("page {} display size is not available", item.page))?;
+    validate_snapshot_export_rect_on_page(page_size, item.rect)?;
+    let tile = snapshot_export_render_tile(item.rect)?;
+    let expected_size = snapshot_export_image_size(item.rect)?;
+    let rendered = renderer.render(RenderRequest {
+        page: item.page - 1,
+        kind: RequestKind::Pixels,
+        tile: Some(tile),
+        scale: SNAPSHOT_EXPORT_PIXELS_PER_POINT,
+        tag: 0,
+        preview: false,
+    });
+    if let Some(error) = rendered.error {
+        return Err(format!("snapshot item {} on page {} could not be rendered: {error}", item.id, item.page));
+    }
+    if (rendered.width, rendered.height) != expected_size {
+        return Err(format!(
+            "snapshot item {} rendered at {}x{} px, expected {}x{} px",
+            item.id, rendered.width, rendered.height, expected_size.0, expected_size.1
+        ));
+    }
+    encode_png(rendered.width, rendered.height, &rendered.rgba).map_err(|e| format!("snapshot item {} could not be encoded as PNG: {e}", item.id))
+}
+
+fn render_snapshot_export_images(
+    root: &Path,
+    source: &ExportSource,
+    items: &[SnapshotExportItem],
+    hooks: &SnapshotExportWriteHooks,
+) -> Result<(), String> {
+    let evidence_dir = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_EVIDENCE_DIR)?;
+    std::fs::create_dir_all(&evidence_dir).map_err(|e| format!("could not create {}: {e}", evidence_dir.display()))?;
+    let mut renderer = PageRenderer::new(source.bytes.clone(), source.config.clone());
+    for item in items {
+        let png = render_snapshot_export_item_png(&mut renderer, source, item)?;
+        write_snapshot_export_file(root, &item.image_path, &png, hooks)?;
+    }
+    Ok(())
+}
+
+fn snapshot_export_png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+    let reader = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().map_err(|e| format!("could not read PNG metadata: {e}"))?;
+    let info = reader.info();
+    Ok((info.width, info.height))
+}
+
+fn validate_snapshot_export_package_dir(
+    root: &Path,
+    source_pdf_bytes: &[u8],
+    items: &[SnapshotExportItem],
+    manifest_json: &str,
+    report_tex: &str,
+) -> Result<(), String> {
+    if !root.is_dir() {
+        return Err(format!("snapshot export package root {} was not created", root.display()));
+    }
+
+    let manifest_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_MANIFEST_PATH)?;
+    let source_pdf_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_SOURCE_PDF_PATH)?;
+    let report_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_REPORT_PATH)?;
+    let evidence_dir = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_EVIDENCE_DIR)?;
+
+    let staged_manifest = std::fs::read_to_string(&manifest_path).map_err(|e| format!("could not read {}: {e}", manifest_path.display()))?;
+    if staged_manifest != manifest_json {
+        return Err("snapshot export manifest.json does not match the generated manifest".into());
+    }
+
+    let staged_report = std::fs::read_to_string(&report_path).map_err(|e| format!("could not read {}: {e}", report_path.display()))?;
+    if staged_report != report_tex {
+        return Err("snapshot export report.tex does not match the generated report".into());
+    }
+
+    let staged_source = std::fs::read(&source_pdf_path).map_err(|e| format!("could not read {}: {e}", source_pdf_path.display()))?;
+    if staged_source != source_pdf_bytes {
+        return Err("snapshot export source.pdf bytes do not match the provided working file".into());
+    }
+
+    if !evidence_dir.is_dir() {
+        return Err(format!("snapshot export evidence directory {} is missing", evidence_dir.display()));
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&staged_manifest).map_err(|e| format!("snapshot export manifest.json is not valid JSON: {e}"))?;
+    let source_path = parsed["source_pdf"]["path"].as_str().ok_or("snapshot export manifest.json is missing source_pdf.path")?;
+    if source_path != SNAPSHOT_EXPORT_SOURCE_PDF_PATH {
+        return Err(format!("snapshot export manifest.json source_pdf.path must be {}, got {source_path}", SNAPSHOT_EXPORT_SOURCE_PDF_PATH));
+    }
+    if !resolve_snapshot_export_path(root, source_path)?.is_file() {
+        return Err(format!("snapshot export manifest.json references missing source PDF {source_path}"));
+    }
+
+    let manifest_items = parsed["items"].as_array().ok_or("snapshot export manifest.json is missing items")?;
+    if manifest_items.len() != items.len() {
+        return Err(format!("snapshot export manifest.json lists {} items, expected {}", manifest_items.len(), items.len()));
+    }
+
+    for (expected, actual) in items.iter().zip(manifest_items) {
+        let id = actual["id"].as_str().ok_or("snapshot export manifest.json item is missing id")?;
+        let kind = actual["kind"].as_str().ok_or("snapshot export manifest.json item is missing kind")?;
+        let page = actual["page"].as_u64().ok_or("snapshot export manifest.json item is missing page")? as usize;
+        let image_path = actual["image"]["path"].as_str().ok_or("snapshot export manifest.json item is missing image.path")?;
+        let width_px = actual["image"]["width_px"].as_u64().ok_or("snapshot export manifest.json item is missing image.width_px")? as u32;
+        let height_px = actual["image"]["height_px"].as_u64().ok_or("snapshot export manifest.json item is missing image.height_px")? as u32;
+
+        if id != expected.id {
+            return Err(format!("snapshot export manifest.json item id {id} does not match expected {}", expected.id));
+        }
+        if kind != expected.kind.as_str() {
+            return Err(format!("snapshot export manifest.json item {} kind {kind} does not match expected {}", expected.id, expected.kind.as_str()));
+        }
+        if page != expected.page {
+            return Err(format!("snapshot export manifest.json item {} page {page} does not match expected {}", expected.id, expected.page));
+        }
+        if image_path != expected.image_path {
+            return Err(format!(
+                "snapshot export manifest.json item {} image path {image_path} does not match expected {}",
+                expected.id, expected.image_path
+            ));
+        }
+
+        let expected_size = snapshot_export_image_size(expected.rect)?;
+        if (width_px, height_px) != expected_size {
+            return Err(format!(
+                "snapshot export manifest.json item {} image size {}x{} does not match expected {}x{}",
+                expected.id, width_px, height_px, expected_size.0, expected_size.1
+            ));
+        }
+
+        let image_bytes =
+            std::fs::read(resolve_snapshot_export_path(root, image_path)?).map_err(|e| format!("could not read package image {image_path}: {e}"))?;
+        let actual_size = snapshot_export_png_dimensions(&image_bytes)?;
+        if actual_size != expected_size {
+            return Err(format!(
+                "snapshot export image {} is {}x{} px, expected {}x{} px",
+                image_path, actual_size.0, actual_size.1, expected_size.0, expected_size.1
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Writes one snapshot export package to `target`, staging in a sibling directory and publishing
+/// only after all artifacts validate.
+pub fn write_snapshot_export_package(target: &Path, input: SnapshotExportPackageInput) -> Result<(), String> {
+    write_snapshot_export_package_with_hooks(target, input, &SnapshotExportWriteHooks::default())
+}
+
+fn write_snapshot_export_package_with_hooks(
+    target: &Path,
+    input: SnapshotExportPackageInput,
+    hooks: &SnapshotExportWriteHooks,
+) -> Result<(), String> {
+    validate_snapshot_export_package_input(&input)?;
+    let manifest_json = snapshot_export_manifest_json(&input.items)?;
+    let report_tex = snapshot_export_report_tex(&input.items)?;
+    let stage = create_snapshot_export_staging_dir(target)?;
+
+    let result = (|| {
+        write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_MANIFEST_PATH, manifest_json.as_bytes(), hooks)?;
+        write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_SOURCE_PDF_PATH, input.source_pdf_bytes.as_slice(), hooks)?;
+        write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_REPORT_PATH, report_tex.as_bytes(), hooks)?;
+        render_snapshot_export_images(&stage, &input.render_source, &input.items, hooks)?;
+        validate_snapshot_export_package_dir(&stage, input.source_pdf_bytes.as_slice(), &input.items, &manifest_json, &report_tex)?;
+        if target.exists() {
+            return Err(format!("snapshot export target already exists: {}", target.display()));
+        }
+        std::fs::rename(&stage, target).map_err(|e| format!("could not publish snapshot export package to {}: {e}", target.display()))?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&stage);
+    }
+
+    result
 }
 
 impl Exporter {
@@ -869,6 +1171,292 @@ mod snapshot_export_artifact_tests {
             assert!(tex.contains(&format!("\\label{{fig:{id}}}")), "{id}");
             assert!(tex.contains(&format!("\\includegraphics[width=\\linewidth]{{{path}}}")), "{id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod snapshot_export_package_tests {
+    use std::sync::Arc;
+
+    use pdfcraft_render::inspect;
+
+    use super::{
+        ExportRect, ExportSource, SnapshotExportItemInput, SnapshotExportPackageInput, SnapshotExportWriteHooks, normalize_snapshot_export_items,
+        write_snapshot_export_package, write_snapshot_export_package_with_hooks,
+    };
+
+    struct TestDir {
+        path: std::path::PathBuf,
+    }
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("pdfcraft-engine-export-{name}-{}-{}", std::process::id(), unique_suffix()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn child(&self, name: &str) -> std::path::PathBuf {
+            self.path.join(name)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn unique_suffix() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn source(bodies: &[&str], boxes: &[[f32; 4]], rotates: &[u16]) -> ExportSource {
+        assert_eq!(bodies.len(), boxes.len());
+        assert_eq!(bodies.len(), rotates.len());
+
+        let kids = (0..bodies.len()).map(|i| format!("{} 0 R", 4 + i * 2)).collect::<Vec<_>>().join(" ");
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            format!("<< /Type /Pages /Kids [{kids}] /Count {} >>", bodies.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ];
+
+        let mut sizes = Vec::with_capacity(bodies.len());
+        for (i, (body, crop)) in bodies.iter().zip(boxes.iter()).enumerate() {
+            let rotate = rotates[i];
+            let media = format!("[{} {} {} {}]", crop[0], crop[1], crop[2], crop[3]);
+            objects.push(format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox {media} /CropBox {media} /Rotate {rotate} /Contents {} 0 R /Resources << /Font << /F1 3 0 R >> >> >>",
+                5 + i * 2
+            ));
+            objects.push(format!("<< /Length {} >>\nstream\n{body}\nendstream", body.len()));
+            let width = crop[2] - crop[0];
+            let height = crop[3] - crop[1];
+            let size = if rotate.is_multiple_of(180) { (width, height) } else { (height, width) };
+            sizes.push(size);
+        }
+
+        let mut bytes = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, object) in objects.iter().enumerate() {
+            offsets.push(bytes.len());
+            bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref = bytes.len();
+        bytes.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+        for offset in offsets {
+            bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        bytes.extend_from_slice(format!("trailer\n<< /Root 1 0 R /Size {} >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+
+        ExportSource { bytes: Arc::new(bytes), config: Default::default(), pages: bodies.len(), sizes }
+    }
+
+    fn package_input(items: Vec<super::SnapshotExportItem>, source: ExportSource) -> SnapshotExportPackageInput {
+        SnapshotExportPackageInput { items, source_pdf_bytes: source.bytes.clone(), render_source: source }
+    }
+
+    fn png_size(path: &std::path::Path) -> (u32, u32) {
+        let bytes = std::fs::read(path).unwrap();
+        let reader = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
+        let info = reader.info();
+        (info.width, info.height)
+    }
+
+    fn png_pixels(path: &std::path::Path) -> (png::ColorType, Vec<u8>) {
+        let bytes = std::fs::read(path).unwrap();
+        let mut reader = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+        let frame = reader.next_frame(&mut pixels).unwrap();
+        pixels.truncate(frame.buffer_size());
+        (frame.color_type, pixels)
+    }
+
+    #[test]
+    fn one_item_package_export_creates_expected_files_and_content() {
+        let source = source(&["0 0 0 rg 20 30 40 50 re f"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
+                caption: "Black box".into(),
+                note: Some("One item".into()),
+            }],
+        )
+        .unwrap();
+
+        let dir = TestDir::new("one-item");
+        let target = dir.child("package");
+        let input = package_input(items.clone(), source.clone());
+
+        write_snapshot_export_package(&target, input).unwrap();
+
+        assert!(target.is_dir());
+        assert!(target.join("manifest.json").is_file());
+        assert!(target.join("source.pdf").is_file());
+        assert!(target.join("report.tex").is_file());
+        assert!(target.join("evidence").is_dir());
+        assert!(target.join("evidence/item_1.png").is_file());
+        assert_eq!(std::fs::read(target.join("source.pdf")).unwrap(), source.bytes.as_slice());
+
+        let manifest = std::fs::read_to_string(target.join("manifest.json")).unwrap();
+        assert!(manifest.contains("\"path\": \"source.pdf\""));
+        assert!(manifest.contains("\"path\": \"evidence/item_1.png\""));
+
+        let report = std::fs::read_to_string(target.join("report.tex")).unwrap();
+        assert!(report.contains("\\includegraphics[width=\\linewidth]{evidence/item_1.png}"));
+        assert!(report.contains("\\label{fig:item_1}"));
+
+        assert_eq!(png_size(&target.join("evidence/item_1.png")), (80, 100));
+    }
+
+    #[test]
+    fn multi_item_export_across_pages_keeps_manifest_latex_and_images_aligned() {
+        let source =
+            source(&["0 0 0 rg 10 240 40 30 re f", "0 0 0 rg 90 110 50 40 re f"], &[[0.0, 0.0, 200.0, 300.0], [0.0, 0.0, 200.0, 300.0]], &[0, 0]);
+        let items = normalize_snapshot_export_items(
+            source.pages,
+            vec![
+                SnapshotExportItemInput {
+                    order: 20,
+                    page: 2,
+                    rect: ExportRect { x: 90.0, y: 110.0, width: 50.0, height: 40.0 },
+                    caption: "Second page".into(),
+                    note: None,
+                },
+                SnapshotExportItemInput {
+                    order: 10,
+                    page: 1,
+                    rect: ExportRect { x: 10.0, y: 30.0, width: 40.0, height: 30.0 },
+                    caption: "First page".into(),
+                    note: Some("ordered first".into()),
+                },
+            ],
+        )
+        .unwrap();
+
+        let dir = TestDir::new("multi-item");
+        let target = dir.child("package");
+        write_snapshot_export_package(&target, package_input(items.clone(), source)).unwrap();
+
+        let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(target.join("manifest.json")).unwrap()).unwrap();
+        let items_json = manifest["items"].as_array().unwrap();
+        assert_eq!(items_json.len(), 2);
+        assert_eq!(items_json[0]["id"], "item_1");
+        assert_eq!(items_json[0]["page"], 1);
+        assert_eq!(items_json[0]["image"]["path"], "evidence/item_1.png");
+        assert_eq!(items_json[1]["id"], "item_2");
+        assert_eq!(items_json[1]["page"], 2);
+        assert_eq!(items_json[1]["image"]["path"], "evidence/item_2.png");
+
+        let report = std::fs::read_to_string(target.join("report.tex")).unwrap();
+        assert!(report.contains("\\label{fig:item_1}"));
+        assert!(report.contains("\\label{fig:item_2}"));
+        assert!(report.contains("\\includegraphics[width=\\linewidth]{evidence/item_1.png}"));
+        assert!(report.contains("\\includegraphics[width=\\linewidth]{evidence/item_2.png}"));
+
+        assert_eq!(png_size(&target.join("evidence/item_1.png")), (80, 60));
+        assert_eq!(png_size(&target.join("evidence/item_2.png")), (100, 80));
+    }
+
+    #[test]
+    fn rotated_page_crop_behavior_uses_display_space_after_rotation() {
+        let source = source(&["1 0 0 rg 20 40 60 30 re f 0 0 1 rg 120 40 60 30 re f"], &[[0.0, 0.0, 200.0, 100.0]], &[90]);
+        let info = inspect(source.bytes.clone(), None).unwrap();
+        assert_eq!((info.pages[0].width, info.pages[0].height), (100.0, 200.0));
+
+        let items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 40.0, y: 20.0, width: 30.0, height: 60.0 },
+                caption: "Rotated red band".into(),
+                note: None,
+            }],
+        )
+        .unwrap();
+
+        let dir = TestDir::new("rotated");
+        let target = dir.child("package");
+        write_snapshot_export_package(&target, package_input(items, source)).unwrap();
+
+        let image = target.join("evidence/item_1.png");
+        assert_eq!(png_size(&image), (60, 120));
+
+        let (color, pixels) = png_pixels(&image);
+        assert_eq!(color, png::ColorType::Rgb);
+        let mut red = 0usize;
+        let mut blue = 0usize;
+        for px in pixels.as_chunks::<3>().0 {
+            if px[0] > 200 && px[1] < 80 && px[2] < 80 {
+                red += 1;
+            }
+            if px[2] > 200 && px[0] < 80 && px[1] < 80 {
+                blue += 1;
+            }
+        }
+        assert!(red > 1000, "the rotated display-space crop should capture the red band");
+        assert_eq!(blue, 0, "the crop should exclude the blue band");
+    }
+
+    #[test]
+    fn injected_write_failure_leaves_no_published_final_package_directory() {
+        let source = source(&["0 0 0 rg 20 30 40 50 re f"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
+                caption: "Black box".into(),
+                note: None,
+            }],
+        )
+        .unwrap();
+
+        let dir = TestDir::new("write-fail");
+        let target = dir.child("package");
+        let err = write_snapshot_export_package_with_hooks(
+            &target,
+            package_input(items, source),
+            &SnapshotExportWriteHooks::fail_before_write("evidence/item_1.png"),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("injected snapshot export write failure"));
+        assert!(!target.exists(), "no false-success package directory is published");
+
+        let names = std::fs::read_dir(&dir.path).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
+        assert_eq!(names, Vec::<String>::new(), "staging directories are removed after failure");
+    }
+
+    #[test]
+    fn invalid_rect_refuses_before_any_package_is_published() {
+        let source = source(&["0 0 0 rg 20 30 40 50 re f"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 180.0, y: 30.0, width: 40.0, height: 50.0 },
+                caption: "Out of bounds".into(),
+                note: None,
+            }],
+        )
+        .unwrap();
+
+        let dir = TestDir::new("bad-rect");
+        let target = dir.child("package");
+        let err = write_snapshot_export_package(&target, package_input(items, source)).unwrap_err();
+
+        assert!(err.contains("exceeds page bounds"));
+        assert!(!target.exists(), "invalid exports must not leave a published directory");
     }
 }
 
