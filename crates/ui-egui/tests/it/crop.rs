@@ -2,6 +2,7 @@
 
 use chrono::{TimeZone, Utc};
 use egui::accesskit::Role;
+use egui::{Pos2, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use pdfcraft_engine::export::{CropPdfRect, CropReviewItem, ExportItemKind};
@@ -68,6 +69,30 @@ fn crop_row(h: &Harness<'static, PdfCraftApp>, label: &str) -> egui::Rect {
     h.get_by_role_and_label(Role::ListItem, label).rect()
 }
 
+fn field<'a>(h: &'a Harness<'static, PdfCraftApp>, label: &'a str) -> egui_kittest::Node<'a> {
+    h.query_all_by(|node| {
+        matches!(node.role(), Role::TextInput | Role::MultilineTextInput) && node.label().as_deref() == Some(label)
+    })
+    .next()
+    .unwrap_or_else(|| panic!("no field {label:?}"))
+}
+
+fn crop_center(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: CropPdfRect) -> Pos2 {
+    let page = h.state().views[0].page_screen_rect(page_number - 1).expect("page on screen");
+    let x = ((rect.left + rect.right) * 0.5) / 300.0 * page.width();
+    let y = (400.0 - (rect.bottom + rect.top) * 0.5) / 400.0 * page.height();
+    pos2(page.left() + x, page.top() + y)
+}
+
+fn click(h: &mut Harness<'static, PdfCraftApp>, p: Pos2) {
+    h.hover_at(p);
+    h.run_steps(1);
+    h.drag_at(p);
+    h.run_steps(1);
+    h.drop_at(p);
+    h.run_steps(3);
+}
+
 #[test]
 fn crops_panel_is_a_right_side_panel_and_lists_rows_in_canonical_order() {
     let h = harness(|app| {
@@ -123,4 +148,97 @@ fn crops_panel_secondary_line_shows_kind_and_page_number() {
 
     crop_row(&h, "Alpha Snapshot · Page 1");
     crop_row(&h, "Page 2 Snapshot · Page 2");
+}
+
+#[test]
+fn selecting_from_the_crops_panel_selects_the_overlay_item_and_updates_metadata() {
+    let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
+    let mut h = harness(move |app| {
+        seed(app, [item("captioned", 1, rect, "Named crop", 10)]);
+        {
+            let id = app.active_ids().expect("active document").1;
+            let store = app.session.crop_review_mut(id).expect("crop review store");
+            let mut crop = store.get("captioned").expect("seeded crop").clone();
+            crop.note = Some("First note".into());
+            store.upsert(crop).expect("updated crop");
+        }
+        app.set_option("panel", "crops").unwrap();
+    });
+
+    crop_row(&h, "Named crop Snapshot · Page 1");
+    h.get_by_role_and_label(Role::ListItem, "Named crop Snapshot · Page 1").click();
+    h.run_steps(3);
+
+    assert_eq!(h.state().views[0].selected_crop(), Some("captioned"));
+    assert!(h.state().views[0].flash.is_some(), "selecting from the list flashes the overlay rectangle");
+
+    h.state_mut().set_option("panel", "metadata").unwrap();
+    h.run_steps(3);
+    assert_eq!(field(&h, "Caption").value().as_deref(), Some("Named crop"));
+    assert_eq!(field(&h, "Note").value().as_deref(), Some("First note"));
+}
+
+#[test]
+fn selecting_from_the_overlay_selects_the_crops_row_and_updates_metadata() {
+    let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
+    let mut h = harness(move |app| {
+        seed(app, [item("overlay-hit", 1, rect, "Overlay crop", 10)]);
+        {
+            let id = app.active_ids().expect("active document").1;
+            let store = app.session.crop_review_mut(id).expect("crop review store");
+            let mut crop = store.get("overlay-hit").expect("seeded crop").clone();
+            crop.note = Some("Overlay note".into());
+            store.upsert(crop).expect("updated crop");
+        }
+        app.set_option("panel", "crops").unwrap();
+    });
+
+    let center = crop_center(&h, 1, rect);
+    click(&mut h, center);
+
+    assert_eq!(h.state().views[0].selected_crop(), Some("overlay-hit"));
+    crop_row(&h, "Overlay crop Snapshot · Page 1");
+
+    h.state_mut().set_option("panel", "metadata").unwrap();
+    h.run_steps(3);
+    assert_eq!(field(&h, "Caption").value().as_deref(), Some("Overlay crop"));
+    assert_eq!(field(&h, "Note").value().as_deref(), Some("Overlay note"));
+}
+
+#[test]
+fn metadata_edits_update_the_selected_crop_without_oscillating_selection_state() {
+    let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
+    let mut h = harness(move |app| {
+        seed(app, [item("editable", 1, rect, "Before", 10)]);
+        {
+            let id = app.active_ids().expect("active document").1;
+            let store = app.session.crop_review_mut(id).expect("crop review store");
+            let mut crop = store.get("editable").expect("seeded crop").clone();
+            crop.note = Some("Old note".into());
+            store.upsert(crop).expect("updated crop");
+        }
+        app.set_option("panel", "metadata").unwrap();
+        app.views[0].select_crop("editable");
+    });
+
+    let caption = field(&h, "Caption");
+    caption.click();
+    h.key_press(egui::Key::End);
+    caption.type_text(" after");
+    h.run_steps(2);
+
+    let note = field(&h, "Note");
+    note.click();
+    h.key_press(egui::Key::End);
+    note.type_text(" updated");
+    h.run_steps(2);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    let item = doc.crop_review().get("editable").expect("updated crop");
+    assert_eq!(item.caption, "Before after");
+    assert_eq!(item.note.as_deref(), Some("Old note updated"));
+    assert_eq!(h.state().views[0].selected_crop(), Some("editable"));
+    assert_eq!(field(&h, "Caption").value().as_deref(), Some("Before after"));
+    assert_eq!(field(&h, "Note").value().as_deref(), Some("Old note updated"));
 }

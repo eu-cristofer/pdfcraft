@@ -52,6 +52,7 @@ pub mod comments;
 mod comments_panel;
 mod compare_ui;
 pub mod control;
+mod crop_review_ui;
 mod create_multiple_ui;
 mod create_ui;
 mod credits;
@@ -64,6 +65,7 @@ mod js_ui;
 mod macos_association;
 mod marks_ui;
 mod measure_ui;
+mod metadata_panel;
 mod ocr_ui;
 mod optimize_ui;
 mod search_ui;
@@ -211,6 +213,7 @@ pub enum RightPanel {
     Bookmarks,
     Pages,
     Crops,
+    Metadata,
     Fields,
     Layers,
     Attachments,
@@ -2917,6 +2920,7 @@ impl PdfCraftApp {
                     "bookmarks" => Some(RightPanel::Bookmarks),
                     "pages" => Some(RightPanel::Pages),
                     "crops" => Some(RightPanel::Crops),
+                    "metadata" => Some(RightPanel::Metadata),
                     "fields" => Some(RightPanel::Fields),
                     "layers" => Some(RightPanel::Layers),
                     "attachments" => Some(RightPanel::Attachments),
