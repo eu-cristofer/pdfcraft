@@ -781,6 +781,10 @@ impl DocView {
         self.crop_review.select(id);
     }
 
+    pub fn set_crop_review_creating(&mut self, creating: bool) {
+        self.crop_review.creating = creating;
+    }
+
     /// The document area on screen.
     pub fn viewport_rect(&self) -> Rect {
         self.viewport_screen
@@ -3278,6 +3282,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         QuickTool::Hand
         | QuickTool::Measure(_)
         | QuickTool::Crop
+        | QuickTool::CropReview
         | QuickTool::EnhanceCamera
         | QuickTool::Fill(_)
         | QuickTool::Field(_)

@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Added** a dedicated persistent crop-review rectangle tool in `pdfcraft-ui-egui` — the crop workspace now reuses the existing marquee drag mechanics to create stored crop items with stable ids and PDF-space geometry, selects the new crop immediately into the Crops/Metadata flow, and keeps `edit.snapshot` as a separate copy-and-export path with focused UI non-regression coverage.
+
 - **Added** crop-review metadata and synchronized selection in `pdfcraft-ui-egui` — stored crop rectangles now paint as page overlays, clicks on either the page overlay or the Crops panel drive one selected-crop path, and a dedicated `Metadata` right-side panel edits `caption` and `note` in place with focused UI coverage for both selection directions and stable metadata updates.
 
 - **Added** a dedicated `Crops` right-side panel in `pdfcraft-ui-egui` — the rail, View ▸ Side panels menu, panel dispatcher, and snapshot coverage now expose crop-review items in canonical engine order, with row labels showing `caption` or `Page N` plus `Snapshot · Page N`, and focused UI tests for ordering and row semantics.

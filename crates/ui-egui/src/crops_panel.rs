@@ -15,6 +15,14 @@ use crate::icons;
 use crate::theme::{self, Tokens};
 
 pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut DocView, nav: &mut Option<Nav>) {
+    ui.horizontal(|ui| {
+        let label = if view.crop_review.creating { tl!("Stop drawing") } else { tl!("Draw crop") };
+        if ui.add(egui::Button::new(label)).clicked() {
+            view.crop_review.creating = !view.crop_review.creating;
+        }
+    });
+    ui.add_space(8.0);
+
     let items = doc.ordered_crop_review_items();
     if items.is_empty() {
         crate::panels::empty(ui, t, "crop", "This document has no crops.");
@@ -34,6 +42,10 @@ pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut Doc
 }
 
 pub(crate) fn page_input(resp: &egui::Response, doc: &Document, xf: &PageXform, ptr: &PagePointer, page: usize, view: &mut DocView) -> bool {
+    if view.crop_review.creating {
+        return crate::zoom_snap::marquee_input(resp, xf, ptr, page, &mut view.marquee, &mut view.marquee_done);
+    }
+
     let Some(pointer) = ptr.pos.filter(|p| xf.rect.contains(*p)) else { return false };
     let hit = page_items(doc, page)
         .filter(|item| xf.user_rect(&doc.info, page, user_rect(item)).expand(4.0).contains(pointer))
@@ -78,6 +90,10 @@ pub(crate) fn paint_page(
         };
         painter.rect_filled(rect, CornerRadius::same(4), fill);
         painter.rect_stroke(rect, CornerRadius::same(4), stroke, egui::StrokeKind::Middle);
+    }
+
+    if view.crop_review.creating {
+        crate::zoom_snap::paint_marquee(_ui, xf, pointer, page, view.marquee);
     }
 }
 

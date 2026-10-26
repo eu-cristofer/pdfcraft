@@ -262,6 +262,8 @@ pub enum QuickTool {
     },
     /// View ▸ Zoom ▸ Marquee Zoom.
     MarqueeZoom,
+    /// Crop review: draw a persistent crop rectangle.
+    CropReview,
     /// Edit ▸ Take a Snapshot.
     Snapshot,
     /// Edit ▸ Column Select: drag a rectangle to select only the text inside it (#740). The
@@ -3153,6 +3155,7 @@ impl PdfCraftApp {
                     "link" => QuickTool::Link,
                     "sign" => QuickTool::SignArea { certify: false },
                     "marquee-zoom" => QuickTool::MarqueeZoom,
+                    "crop-review" => QuickTool::CropReview,
                     "snapshot" => QuickTool::Snapshot,
                     "column-select" => QuickTool::ColumnSelect,
                     "certify" => QuickTool::SignArea { certify: true },
@@ -3181,6 +3184,11 @@ impl PdfCraftApp {
                         QuickTool::Comment(t)
                     }
                 };
+                if value == "crop-review"
+                    && let Some(i) = self.active
+                {
+                    self.views[i].crop_review.creating = true;
+                }
             }
             ("author", _) => self.comment_prefs.author = value.to_string(),
             ("comment-tool-pinned", _) => {

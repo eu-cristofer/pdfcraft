@@ -2,7 +2,7 @@
 
 use chrono::{TimeZone, Utc};
 use egui::accesskit::Role;
-use egui::{Pos2, pos2};
+use egui::{Pos2, Rect, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use pdfcraft_engine::export::{CropPdfRect, CropReviewItem, ExportItemKind};
@@ -13,8 +13,15 @@ use crate::support;
 const FIXTURE: &[u8] = b"%PDF-1.7
 1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
 2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] >> endobj
-4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 5 0 R /Resources << /Font << /F1 7 0 R >> >> >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> >> endobj
+5 0 obj << /Length 43 >> stream
+BT /F1 16 Tf 20 320 Td (Crop review page 1) Tj ET
+endstream endobj
+6 0 obj << /Length 43 >> stream
+BT /F1 16 Tf 20 320 Td (Crop review page 2) Tj ET
+endstream endobj
+7 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
 trailer << /Root 1 0 R >>
 %%EOF";
 
@@ -241,4 +248,57 @@ fn metadata_edits_update_the_selected_crop_without_oscillating_selection_state()
     assert_eq!(h.state().views[0].selected_crop(), Some("editable"));
     assert_eq!(field(&h, "Caption").value().as_deref(), Some("Before after"));
     assert_eq!(field(&h, "Note").value().as_deref(), Some("Old note updated"));
+}
+
+#[test]
+fn creating_a_crop_rectangle_appears_in_overlay_crops_and_metadata() {
+    let mut h = harness(|app| app.set_option("panel", "crops").unwrap());
+    h.state_mut().set_option("quick", "crop-review").unwrap();
+    h.state_mut().views[0].set_crop_review_creating(true);
+    h.state_mut().views[0].marquee_done = Some((0, Rect::from_min_max(pos2(10.0, 10.0), pos2(40.0, 40.0)), [20.0, 40.0, 90.0, 85.0]));
+    h.run_steps(4);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    assert_eq!(doc.crop_review().items().len(), 1);
+    let created = &doc.crop_review().items()[0];
+    assert_eq!(h.state().views[0].selected_crop(), Some(created.id.as_str()));
+
+    crop_row(&h, "Page 1 Snapshot · Page 1");
+    h.state_mut().set_option("panel", "metadata").unwrap();
+    h.run_steps(3);
+    assert_eq!(field(&h, "Caption").value().as_deref(), Some(""));
+}
+
+#[test]
+fn snapshot_tool_still_copies_pixels_and_does_not_open_crop_review_flow() {
+    let mut h = harness(|app| {
+        app.system_clipboard = false;
+    });
+    assert!(h.state_mut().execute("edit.snapshot"));
+    h.state_mut().views[0].marquee_done = Some((0, Rect::from_min_max(pos2(10.0, 10.0), pos2(40.0, 40.0)), [20.0, 40.0, 90.0, 85.0]));
+    h.run_steps(4);
+
+    assert!(h.state().last_snapshot.is_some(), "snapshot pixels were copied");
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    assert!(doc.crop_review().items().is_empty(), "snapshot did not create crop-review items");
+    assert!(h.state().export_draft.snapshot_package.is_some(), "snapshot kept its export dialog flow");
+}
+
+#[test]
+fn created_crop_rectangles_are_stored_in_pdf_coordinates_not_screen_space() {
+    let mut h = harness(|_app| {});
+    h.state_mut().set_option("quick", "crop-review").unwrap();
+    h.state_mut().views[0].set_crop_review_creating(true);
+    h.state_mut().views[0].marquee_done = Some((0, Rect::from_min_max(pos2(10.0, 10.0), pos2(40.0, 40.0)), [20.0, 40.0, 90.0, 85.0]));
+    h.run_steps(4);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    let item = doc.crop_review().items().first().expect("created crop");
+    assert!(item.rect_pdf.left > 0.0);
+    assert!(item.rect_pdf.bottom > 0.0);
+    assert_ne!(item.rect_pdf.left, 20.0, "stored x is not the screen-space/view-space x directly");
+    assert_ne!(item.rect_pdf.bottom, 35.0, "stored y is not the screen-space/view-space y directly");
 }

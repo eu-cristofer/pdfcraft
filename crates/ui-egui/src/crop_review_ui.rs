@@ -8,6 +8,7 @@ pub(crate) struct CropReviewView {
     pub metadata_for: Option<String>,
     pub metadata_caption: String,
     pub metadata_note: String,
+    pub creating: bool,
 }
 
 impl CropReviewView {
@@ -33,6 +34,7 @@ impl CropReviewView {
         self.metadata_for = None;
         self.metadata_caption.clear();
         self.metadata_note.clear();
+        self.creating = false;
     }
 
     pub(crate) fn selected_item<'a>(&self, doc: &'a Document) -> Option<&'a pdfcraft_engine::export::CropReviewItem> {
