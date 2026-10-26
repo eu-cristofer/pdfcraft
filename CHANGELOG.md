@@ -13,6 +13,7 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Registered** sprint project `docs/changes/002_selected-rec/` — phased plan for selected rectangle comment export through the current standalone snapshot package/report flow.
 - **Hardened** snapshot export v1 with repeatability and guardrail coverage — deterministic package reruns, explicit rejection of non-`snapshot` evidence kinds in v1, and final contributor-facing docs for extension seams.
 - **Added** end-to-end snapshot export package writing in `crates/engine/src/export.rs` — emits `manifest.json`, `source.pdf`, `report.tex`, and cropped PNG evidence via staged directory publication with validation and failure cleanup.
 - **Added** manifest and LaTeX generation core in `crates/engine/src/export.rs` — deterministic `manifest.json` and `report.tex` output from the shared normalized snapshot item list, with golden coverage for alignment and escaping.
