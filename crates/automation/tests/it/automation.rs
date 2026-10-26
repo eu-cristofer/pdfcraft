@@ -748,20 +748,24 @@ fn snapshot_package_export_through_tools() {
     let dir = workdir("snapshot-package");
     let mut a = auto(&dir);
     let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
-    let result = ok(
-        &mut a,
-        "doc_export_snapshot_package",
-        json!({
-            "doc": doc,
-            "out": "package",
-            "items": [{
-                "page": 1,
-                "rect": [10, 20, 50, 70],
-                "caption": "Page 1 crop",
-                "note": "One item"
-            }]
-        }),
-    );
+    let args = json!({
+        "doc": doc,
+        "out": "package",
+        "items": [{
+            "page": 1,
+            "rect": [10, 20, 50, 70],
+            "caption": "Page 1 crop",
+            "note": "One item"
+        }]
+    });
+    if !pdfcraft_engine::ocr::available() {
+        assert!(matches!(
+            a.call("doc_export_snapshot_package", &args),
+            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
+        ));
+        return;
+    }
+    let result = ok(&mut a, "doc_export_snapshot_package", args);
     assert_eq!(result["count"], 1);
     assert_eq!(result["items"][0]["id"], "item_1");
     assert_eq!(result["items"][0]["page"], 1);
@@ -781,6 +785,9 @@ fn snapshot_package_export_through_tools() {
     let report = std::fs::read_to_string(root.join("report.tex")).unwrap();
     assert!(report.contains("\\label{fig:item_1}"));
     assert!(report.contains("\\caption{Page 1 crop}"));
+    if pdfcraft_engine::ocr::available() {
+        assert!(report.contains("\\paragraph{OCR.}"), "{report}");
+    }
 }
 
 #[test]
@@ -788,18 +795,22 @@ fn snapshot_package_export_keeps_request_order_for_multiple_items() {
     let dir = workdir("snapshot-package-order");
     let mut a = auto(&dir);
     let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
-    let result = ok(
-        &mut a,
-        "doc_export_snapshot_package",
-        json!({
-            "doc": doc,
-            "out": "package",
-            "items": [
-                { "page": 3, "rect": [10, 20, 50, 70], "caption": "Third page" },
-                { "page": 1, "rect": [20, 30, 80, 90], "caption": "First page" }
-            ]
-        }),
-    );
+    let args = json!({
+        "doc": doc,
+        "out": "package",
+        "items": [
+            { "page": 3, "rect": [10, 20, 50, 70], "caption": "Third page" },
+            { "page": 1, "rect": [20, 30, 80, 90], "caption": "First page" }
+        ]
+    });
+    if !pdfcraft_engine::ocr::available() {
+        assert!(matches!(
+            a.call("doc_export_snapshot_package", &args),
+            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
+        ));
+        return;
+    }
+    let result = ok(&mut a, "doc_export_snapshot_package", args);
     assert_eq!(result["items"][0]["id"], "item_1");
     assert_eq!(result["items"][0]["page"], 3);
     assert_eq!(result["items"][1]["id"], "item_2");
@@ -839,6 +850,20 @@ fn snapshot_package_export_refuses_invalid_rectangles_and_confined_paths() {
         ),
         Err(ToolError::Failed(_))
     ));
+
+    if !pdfcraft_engine::ocr::available() {
+        assert!(matches!(
+            a.call(
+                "doc_export_snapshot_package",
+                &json!({
+                    "doc": doc,
+                    "out": "needs-models",
+                    "items": [{ "page": 1, "rect": [10, 20, 50, 70], "caption": "Needs OCR" }]
+                })
+            ),
+            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
+        ));
+    }
 }
 
 #[test]

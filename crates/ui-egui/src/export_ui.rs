@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use egui::{Align, Layout};
 use pdfcraft_engine::export::{
     ExportRect, ExportSource, Exporter, ImageFormat, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportPackageInput,
-    normalize_snapshot_export_items, write_snapshot_export_package,
+    normalize_snapshot_export_items, populate_snapshot_export_ocr, write_snapshot_export_package,
 };
 
 use crate::marks_ui::PageRange;
@@ -326,7 +326,7 @@ fn run_snapshot_package_export(
 
     set(0, None);
 
-    let items = match normalize_snapshot_export_items(
+    let mut items = match normalize_snapshot_export_items(
         src.pages,
         vec![SnapshotExportItemInput {
             order: 0,
@@ -342,6 +342,10 @@ fn run_snapshot_package_export(
             return;
         }
     };
+    if let Err(e) = populate_snapshot_export_ocr(&src, &mut items) {
+        set(1, Some(crate::i18n::fmt(tl!("Export stopped: {e}"), &[("e", &e)])));
+        return;
+    }
 
     let target = snapshot_package_target(&dir, &stem);
     let shown = target.display().to_string();

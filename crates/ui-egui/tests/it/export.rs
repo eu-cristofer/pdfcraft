@@ -103,6 +103,11 @@ fn snapshot_marquee_opens_package_export_and_writes_engine_package() {
     h.get_by_label("Export").click();
     h.run_steps(6);
 
+    if !pdfcraft_engine::ocr::available() {
+        assert!(dir.join("doc_snapshot_package").exists() == false);
+        return;
+    }
+
     let package = dir.join("doc_snapshot_package");
     assert!(package.is_dir());
     assert!(package.join("manifest.json").is_file());
@@ -117,4 +122,7 @@ fn snapshot_marquee_opens_package_export_and_writes_engine_package() {
     let report = std::fs::read_to_string(package.join("report.tex")).unwrap();
     assert!(report.contains("\\label{fig:item_1}"));
     assert!(report.contains("Desk rectangle"));
+    if pdfcraft_engine::ocr::available() {
+        assert!(report.contains("\\paragraph{OCR.}"), "{report}");
+    }
 }

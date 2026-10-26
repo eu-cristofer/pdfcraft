@@ -361,6 +361,7 @@ const SNAPSHOT_EXPORT_COORDINATE_PAGE_ROTATION: &str = "already-applied";
 const SNAPSHOT_EXPORT_RENDERING_SOURCE: &str = "display-equivalent";
 const SNAPSHOT_EXPORT_RENDERING_IMAGE_FORMAT: &str = "png";
 const SNAPSHOT_EXPORT_PIXELS_PER_POINT: f32 = 2.0;
+const SNAPSHOT_EXPORT_OCR_DPI: f32 = 300.0;
 
 fn snapshot_export_tile_axis(start: f32, span: f32) -> Result<(u32, u32), String> {
     if !start.is_finite() || !span.is_finite() {
@@ -380,6 +381,13 @@ fn snapshot_export_render_tile(rect: ExportRect) -> Result<Tile, String> {
     let rect = rect.validate()?;
     let (x, w) = snapshot_export_tile_axis(rect.x, rect.width)?;
     let (y, h) = snapshot_export_tile_axis(rect.y, rect.height)?;
+    Ok(Tile { x, y, w, h })
+}
+
+fn snapshot_export_render_tile_at_scale(rect: ExportRect, scale: f32) -> Result<Tile, String> {
+    let rect = rect.validate()?;
+    let (x, w) = snapshot_export_tile_axis(rect.x * scale, rect.width * scale)?;
+    let (y, h) = snapshot_export_tile_axis(rect.y * scale, rect.height * scale)?;
     Ok(Tile { x, y, w, h })
 }
 
@@ -583,6 +591,13 @@ pub fn snapshot_export_report_tex(items: &[SnapshotExportItem]) -> Result<String
             out.push('\n');
             out.push_str("\\paragraph{Note.}\n");
             out.push_str(&latex_escape_plain_text(note));
+            out.push('\n');
+        }
+
+        if let Some(ocr) = item.ocr.as_ref().map(|ocr| ocr.text.trim()).filter(|text| !text.is_empty()) {
+            out.push('\n');
+            out.push_str("\\paragraph{OCR.}\n");
+            out.push_str(&latex_escape_plain_text(ocr));
             out.push('\n');
         }
 
@@ -852,6 +867,41 @@ fn write_snapshot_export_package_with_hooks(
     }
 
     result
+}
+
+fn render_snapshot_export_item_ocr(
+    renderer: &mut PageRenderer,
+    source: &ExportSource,
+    item: &SnapshotExportItem,
+) -> Result<Option<SnapshotExportOcr>, String> {
+    validate_snapshot_export_page(source.pages, item.page)?;
+    let page_size = *source.sizes.get(item.page - 1).ok_or_else(|| format!("page {} display size is not available", item.page))?;
+    validate_snapshot_export_rect_on_page(page_size, item.rect)?;
+    let scale = SNAPSHOT_EXPORT_OCR_DPI / 72.0;
+    let tile = snapshot_export_render_tile_at_scale(item.rect, scale)?;
+    let rendered = renderer.render(RenderRequest { page: item.page - 1, kind: RequestKind::Pixels, tile: Some(tile), scale, tag: 0, preview: false });
+    if let Some(error) = rendered.error {
+        return Err(format!("snapshot item {} on page {} could not be rendered for OCR: {error}", item.id, item.page));
+    }
+    let lines =
+        crate::ocr::engine().map_err(|e| e.to_string())?.recognize(&rendered.rgba, rendered.width, rendered.height).map_err(|e| e.to_string())?;
+    let text = lines.iter().map(|line| line.text()).collect::<Vec<_>>().join("\n").trim().to_string();
+    Ok((!text.is_empty()).then_some(SnapshotExportOcr { text }))
+}
+
+/// Populates missing OCR slots from the selected portion itself, using the shared OCR engine.
+///
+/// v1 keeps OCR derived and report-only: callers should run this before package writing so the
+/// report can include the selected portion's OCR text without changing the manifest contract.
+pub fn populate_snapshot_export_ocr(source: &ExportSource, items: &mut [SnapshotExportItem]) -> Result<(), String> {
+    if items.iter().all(|item| item.ocr.is_some()) {
+        return Ok(());
+    }
+    let mut renderer = PageRenderer::new(source.bytes.clone(), source.config.clone());
+    for item in items.iter_mut().filter(|item| item.ocr.is_none()) {
+        item.ocr = render_snapshot_export_item_ocr(&mut renderer, source, item)?;
+    }
+    Ok(())
 }
 
 impl Exporter {
@@ -1231,7 +1281,7 @@ mod snapshot_export_artifact_tests {
     use serde_json::Value;
 
     use super::{
-        ExportRect, SnapshotExportItem, SnapshotExportItemInput, SnapshotExportMetadata, normalize_snapshot_export_items,
+        ExportRect, SnapshotExportItem, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportOcr, normalize_snapshot_export_items,
         snapshot_export_manifest_json, snapshot_export_report_tex,
     };
 
@@ -1371,6 +1421,24 @@ mod snapshot_export_artifact_tests {
             assert!(tex.contains(&format!("\\includegraphics[width=\\linewidth]{{{path}}}")), "{id}");
         }
     }
+
+    #[test]
+    fn report_tex_includes_an_ocr_paragraph_when_present() {
+        let items = normalize_snapshot_export_items(
+            1,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
+                metadata: metadata("Caption", Some("Note text")),
+                ocr: Some(SnapshotExportOcr { text: "Derived OCR text".into() }),
+            }],
+        )
+        .unwrap();
+
+        let tex = snapshot_export_report_tex(&items).unwrap();
+        assert!(tex.contains("\\paragraph{OCR.}\nDerived OCR text\n"), "{tex}");
+    }
 }
 
 #[cfg(test)]
@@ -1381,7 +1449,7 @@ mod snapshot_export_package_tests {
 
     use super::{
         ExportRect, ExportSource, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportPackageInput, SnapshotExportWriteHooks,
-        normalize_snapshot_export_items, write_snapshot_export_package, write_snapshot_export_package_with_hooks,
+        normalize_snapshot_export_items, populate_snapshot_export_ocr, write_snapshot_export_package, write_snapshot_export_package_with_hooks,
     };
 
     fn metadata(caption: &str, note: Option<&str>) -> SnapshotExportMetadata {
@@ -1660,6 +1728,32 @@ mod snapshot_export_package_tests {
 
         assert!(err.contains("exceeds page bounds"));
         assert!(!target.exists(), "invalid exports must not leave a published directory");
+    }
+
+    #[test]
+    fn ocr_population_follows_model_availability_rule() {
+        let source = source(&["BT /F1 24 Tf 20 150 Td (Page 1) Tj ET"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let mut items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 10.0, y: 120.0, width: 110.0, height: 50.0 },
+                metadata: metadata("OCR crop", None),
+                ocr: None,
+            }],
+        )
+        .unwrap();
+
+        let result = populate_snapshot_export_ocr(&source, &mut items);
+        if crate::ocr::available() {
+            let text = items[0].ocr.as_ref().map(|ocr| ocr.text.clone()).unwrap_or_default();
+            assert!(result.is_ok(), "{result:?}");
+            assert!(!text.trim().is_empty(), "{text:?}");
+        } else {
+            let err = result.unwrap_err();
+            assert!(err.contains("the text recognition models are not installed"), "{err}");
+        }
     }
 }
 

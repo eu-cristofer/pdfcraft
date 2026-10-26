@@ -1555,7 +1555,8 @@ impl Automation {
         }
 
         let target = self.resolve(a.str("out")?, true)?;
-        let items = pdfcraft_engine::export::normalize_snapshot_export_items(page_count, inputs).map_err(ToolError::InvalidArgs)?;
+        let mut items = pdfcraft_engine::export::normalize_snapshot_export_items(page_count, inputs).map_err(ToolError::InvalidArgs)?;
+        pdfcraft_engine::export::populate_snapshot_export_ocr(&render_source, &mut items).map_err(failed)?;
         let listed = items
             .iter()
             .map(|item| {

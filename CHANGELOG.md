@@ -21,6 +21,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 - **Added** a desktop rectangle-export flow on top of the existing snapshot marquee tool — dragging a snapshot rectangle now opens a focused package-export dialog for typed `caption`/`note` metadata, then writes the same standard package through the shared engine export path while still copying the selected pixels to the clipboard.
 
+- **Integrated** OCR into the rectangle-driven export flow — snapshot package export now derives OCR text from the selected portion itself, emits it as a derived `OCR.` paragraph in `report.tex`, keeps `manifest.json` unchanged, and follows the repo's existing failure rule when OCR models are unavailable.
+
 - **Registered** sprint project `docs/changes/003_export-flow/` — phased plan for rectangle-driven evidence export built from user-created selections, typed metadata, OCR of the selected portion, and minimal LaTeX package output with headless and desktop parity.
 - **Added** an engine bridge from selected rectangle comments to snapshot export items — supported-kind filtering, displayed-rectangle mapping, type-label captions, comment-text notes, and canonical comment-target ordering for reuse by UI and automation.
 - **Specified** `docs/selected-rectangle-export.md` — repo-local contract for selected-comment snapshot export covering supported v1 annotation kinds, `caption`/`note` mapping, displayed-rectangle semantics, canonical export ordering, and later UI/automation handoff into the engine.
