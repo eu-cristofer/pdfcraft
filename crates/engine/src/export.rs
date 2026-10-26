@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind, Tile};
 
-use crate::Document;
+use crate::{Document, comment_kind};
 
 /// Renders and extracts pages of one document state.
 pub struct Exporter {
@@ -102,6 +102,16 @@ pub struct SnapshotExportPackageInput {
     pub source_pdf_bytes: Arc<Vec<u8>>,
 }
 
+/// A selected comment in the engine-facing 1-based page/index shape shared with other comment
+/// addressing entry points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SelectedCommentTarget {
+    /// 1-based page number.
+    pub page: usize,
+    /// 1-based annotation index within the page's `/Annots` array.
+    pub index: usize,
+}
+
 impl Document {
     /// What an export reads, for exporting on another thread. These are the displayed
     /// bytes, so they may carry missing comment appearances PdfCraft drew. Signature
@@ -115,6 +125,124 @@ impl Document {
             sizes: self.info.pages.iter().map(|p| (p.width, p.height)).collect(),
         }
     }
+}
+
+fn zero_based_selected_comment_target(target: SelectedCommentTarget) -> Result<(usize, usize), String> {
+    if target.page == 0 || target.index == 0 {
+        return Err("selected comment targets use 1-based page and index".into());
+    }
+    Ok((target.page - 1, target.index - 1))
+}
+
+fn resolve_selected_comment_annotation_in<'a>(
+    pages: &[pdfcraft_render::PageInfo],
+    annotations: &'a [pdfcraft_render::Annotation],
+    target: SelectedCommentTarget,
+) -> Result<&'a pdfcraft_render::Annotation, String> {
+    let (page, index) = zero_based_selected_comment_target(target)?;
+    if page >= pages.len() {
+        return Err(format!("page {} does not exist", target.page));
+    }
+    annotations
+        .iter()
+        .find(|annotation| annotation.page == page && annotation.index == index)
+        .ok_or_else(|| format!("page {} has no comment {}", target.page, target.index))
+}
+
+/// Resolves one selected 1-based page/index target to the current inspected annotation.
+pub fn resolve_selected_comment_annotation(doc: &Document, target: SelectedCommentTarget) -> Result<&pdfcraft_render::Annotation, String> {
+    resolve_selected_comment_annotation_in(&doc.info.pages, &doc.info.annotations, target)
+}
+
+fn selected_comment_note(contents: Option<&str>) -> Option<String> {
+    contents.map(|text| text.trim_matches('\0').trim().to_string()).filter(|text| !text.is_empty())
+}
+
+fn selected_comment_caption(annotation: &pdfcraft_render::Annotation) -> Result<String, String> {
+    let kind = comment_kind(annotation);
+    match kind {
+        "Rectangle" | "Callout" | "Text Box" => Ok(kind.to_owned()),
+        _ => Err(format!("page {} comment {} has unsupported selected-rectangle kind {}", annotation.page + 1, annotation.index + 1, kind)),
+    }
+}
+
+fn selected_comment_export_rect(page: &pdfcraft_render::PageInfo, annotation: &pdfcraft_render::Annotation) -> Result<ExportRect, String> {
+    let shown = annotation.shown_rect(page.rotation);
+    let x0 = shown[0].min(shown[2]);
+    let y0 = shown[1].min(shown[3]);
+    let x1 = shown[0].max(shown[2]);
+    let y1 = shown[1].max(shown[3]);
+    let corners = [[x0, y0], [x0, y1], [x1, y0], [x1, y1]];
+
+    let mut left = f32::INFINITY;
+    let mut top = f32::INFINITY;
+    let mut right = f32::NEG_INFINITY;
+    let mut bottom = f32::NEG_INFINITY;
+
+    for [x, y] in corners {
+        let [view_x, view_y] = page.user_to_view(x, y);
+        left = left.min(view_x);
+        top = top.min(view_y);
+        right = right.max(view_x);
+        bottom = bottom.max(view_y);
+    }
+
+    ExportRect { x: left, y: top, width: right - left, height: bottom - top }.validate()
+}
+
+fn selected_comment_snapshot_export_item_input_from_parts(
+    page: &pdfcraft_render::PageInfo,
+    annotation: &pdfcraft_render::Annotation,
+    order: usize,
+) -> Result<SnapshotExportItemInput, String> {
+    Ok(SnapshotExportItemInput {
+        order,
+        page: annotation.page + 1,
+        rect: selected_comment_export_rect(page, annotation)?,
+        caption: selected_comment_caption(annotation)?,
+        note: selected_comment_note(annotation.contents.as_deref()),
+    })
+}
+
+/// Maps one selected comment to one raw snapshot export item input.
+pub fn selected_comment_snapshot_export_item_input(doc: &Document, target: SelectedCommentTarget) -> Result<SnapshotExportItemInput, String> {
+    let annotation = resolve_selected_comment_annotation(doc, target)?;
+    let page = doc.info.pages.get(annotation.page).ok_or_else(|| format!("page {} does not exist", annotation.page + 1))?;
+    selected_comment_snapshot_export_item_input_from_parts(page, annotation, 0)
+}
+
+fn canonical_selected_comment_targets(targets: &[SelectedCommentTarget]) -> Vec<SelectedCommentTarget> {
+    let mut ordered = targets.iter().copied().enumerate().collect::<Vec<_>>();
+    ordered.sort_by_key(|(original_index, target)| (target.page, target.index, *original_index));
+    ordered.into_iter().map(|(_, target)| target).collect()
+}
+
+fn selected_comment_snapshot_export_item_inputs_from_parts(
+    pages: &[pdfcraft_render::PageInfo],
+    annotations: &[pdfcraft_render::Annotation],
+    targets: &[SelectedCommentTarget],
+) -> Result<Vec<SnapshotExportItemInput>, String> {
+    let ordered_targets = canonical_selected_comment_targets(targets);
+    let mut items = Vec::with_capacity(ordered_targets.len());
+    for (order, target) in ordered_targets.into_iter().enumerate() {
+        let annotation = resolve_selected_comment_annotation_in(pages, annotations, target)?;
+        let page = pages.get(annotation.page).ok_or_else(|| format!("page {} does not exist", annotation.page + 1))?;
+        items.push(selected_comment_snapshot_export_item_input_from_parts(page, annotation, order)?);
+    }
+    Ok(items)
+}
+
+/// Maps selected comments to canonical raw snapshot export inputs in document order.
+pub fn selected_comment_snapshot_export_item_inputs(
+    doc: &Document,
+    targets: &[SelectedCommentTarget],
+) -> Result<Vec<SnapshotExportItemInput>, String> {
+    selected_comment_snapshot_export_item_inputs_from_parts(&doc.info.pages, &doc.info.annotations, targets)
+}
+
+/// Maps selected comments to normalized snapshot export items with canonical IDs and image paths.
+pub fn selected_comment_snapshot_export_items(doc: &Document, targets: &[SelectedCommentTarget]) -> Result<Vec<SnapshotExportItem>, String> {
+    normalize_snapshot_export_items(doc.info.pages.len(), selected_comment_snapshot_export_item_inputs(doc, targets)?)
 }
 
 /// Export all images: the images `pages` (0-based) use, each once, skipping those under
