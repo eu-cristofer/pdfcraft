@@ -25,5 +25,5 @@ Status: active
 - [x] [Sprint 1 — Product contract and flow definition](./sprint-1.md) — done 2026-10-26
 - [x] [Sprint 2 — Engine export model alignment](./sprint-2.md) — done 2026-10-26
 - [x] [Sprint 3 — Headless rectangle export flow](./sprint-3.md) — done 2026-10-26
-- [ ] [Sprint 4 — Desktop rectangle export flow](./sprint-4.md)
+- [x] [Sprint 4 — Desktop rectangle export flow](./sprint-4.md) — done 2026-10-26
 - [ ] [Sprint 5 — OCR integration and final hardening](./sprint-5.md)
