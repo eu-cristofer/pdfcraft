@@ -6,7 +6,7 @@ use pdfcraft_render::{RenderConfig, RenderRequest, RequestKind, Tile};
 
 use crate::canvas::{DocView, PageXform};
 use crate::page_pointer::PagePointer;
-use crate::{PdfCraftApp, QuickTool};
+use crate::{Dialog, PdfCraftApp, QuickTool};
 
 /// A finished gesture: (page, the rectangle on screen, the same in page view points
 /// [x0, y0, x1, y1]); a plain click has an empty rectangle.
@@ -71,8 +71,11 @@ impl PdfCraftApp {
                     Ok((w, h)) => {
                         self.notify_fmt("The selected area has been copied ({w} × {h} pixels)", &[("w", &w.to_string()), ("h", &h.to_string())])
                     }
-                    Err(e) => self.notify_fmt("Couldn't take the snapshot: {e}", &[("e", &e.to_string())]),
+                    Err(e) => self.notify_fmt("Couldn't copy the snapshot: {e}", &[("e", &e.to_string())]),
                 }
+                self.export_draft.snapshot_package =
+                    Some(crate::export_ui::SnapshotPackageDraft { page, rect: view_rect, caption: String::new(), note: String::new() });
+                self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::Image));
             }
             _ => {}
         }

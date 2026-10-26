@@ -13,6 +13,17 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Specified** `docs/rectangle-driven-export.md` and marked `docs/selected-rectangle-export.md` superseded for `003_export-flow` where the notes conflict — rectangle-driven evidence export now uses user-created rectangles in the shared displayed-page coordinate contract, explicit typed `caption`/`note` metadata, OCR derived from the selected portion into the minimal figure-oriented `report.tex`, and one planned engine path shared by headless and desktop entrypoints.
+
+- **Aligned** the engine snapshot export model with `003_export-flow` — `crates/engine/src/export.rs` now carries explicit rectangle-driven metadata (`caption` plus optional `note`) and an OCR seam on the shared normalized item path, while keeping the current package contract and deterministic manifest/image/report generation unchanged.
+
+- **Added** a headless rectangle-driven snapshot export tool — `pdfcraft-automation` now writes the standard package from ordered page rectangles plus typed `caption`/`note` metadata, reusing the shared engine package writer and preserving root confinement and deterministic item ordering.
+
+- **Added** a desktop rectangle-export flow on top of the existing snapshot marquee tool — dragging a snapshot rectangle now opens a focused package-export dialog for typed `caption`/`note` metadata, then writes the same standard package through the shared engine export path while still copying the selected pixels to the clipboard.
+
+- **Integrated** OCR into the rectangle-driven export flow — snapshot package export now derives OCR text from the selected portion itself, emits it as a derived `OCR.` paragraph in `report.tex`, keeps `manifest.json` unchanged, and follows the repo's existing failure rule when OCR models are unavailable.
+
+- **Registered** sprint project `docs/changes/003_export-flow/` — phased plan for rectangle-driven evidence export built from user-created selections, typed metadata, OCR of the selected portion, and minimal LaTeX package output with headless and desktop parity.
 - **Added** an engine bridge from selected rectangle comments to snapshot export items — supported-kind filtering, displayed-rectangle mapping, type-label captions, comment-text notes, and canonical comment-target ordering for reuse by UI and automation.
 - **Specified** `docs/selected-rectangle-export.md` — repo-local contract for selected-comment snapshot export covering supported v1 annotation kinds, `caption`/`note` mapping, displayed-rectangle semantics, canonical export ordering, and later UI/automation handoff into the engine.
 - **Registered** sprint project `docs/changes/002_selected-rec/` — phased plan for selected rectangle comment export through the current standalone snapshot package/report flow.

@@ -3,10 +3,14 @@
 //! On the desktop the export runs on a worker thread and reports progress in the notice bar;
 //! on the web it runs in place and downloads the files.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use egui::{Align, Layout};
-use pdfcraft_engine::export::{ExportSource, Exporter, ImageFormat};
+use pdfcraft_engine::export::{
+    ExportRect, ExportSource, Exporter, ImageFormat, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportPackageInput,
+    normalize_snapshot_export_items, populate_snapshot_export_ocr, write_snapshot_export_package,
+};
 
 use crate::marks_ui::PageRange;
 use crate::theme::{self, Tokens};
@@ -21,24 +25,113 @@ pub enum ExportKind {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct SnapshotPackageDraft {
+    /// 0-based page index.
+    pub page: usize,
+    /// Display-page rectangle [x0, y0, x1, y1] in points, top-left origin.
+    pub rect: [f32; 4],
+    pub caption: String,
+    pub note: String,
+}
+
+impl SnapshotPackageDraft {
+    fn metadata(&self) -> SnapshotExportMetadata {
+        SnapshotExportMetadata {
+            caption: self.caption.trim().to_string(),
+            note: (!self.note.trim().is_empty()).then(|| self.note.trim().to_string()),
+        }
+    }
+
+    fn export_rect(&self) -> ExportRect {
+        ExportRect { x: self.rect[0], y: self.rect[1], width: self.rect[2] - self.rect[0], height: self.rect[3] - self.rect[1] }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExportDraft {
     pub dpi: f64,
     pub range: PageRange,
     pub format: ImageFormat,
     /// Export all images ▸ skip images with fewer pixels than this on their shorter side.
     pub min_side: u32,
+    /// A one-rectangle snapshot package draft opened from the marquee flow.
+    pub snapshot_package: Option<SnapshotPackageDraft>,
 }
 
 impl Default for ExportDraft {
     fn default() -> Self {
-        Self { dpi: 150.0, range: PageRange::default(), format: ImageFormat::Png, min_side: 0 }
+        Self { dpi: 150.0, range: PageRange::default(), format: ImageFormat::Png, min_side: 0, snapshot_package: None }
     }
 }
 
 /// Progress of a background export: (done, total, final message once finished).
 pub type ExportStatus = Arc<Mutex<Option<(usize, usize, Option<String>)>>>;
 
+fn export_stem(name: &str) -> String {
+    let stem = name.trim_end_matches(".pdf").trim_end_matches(".PDF").trim();
+    if stem.is_empty() { "export".into() } else { stem.to_string() }
+}
+
+fn snapshot_package_target(dir: &Path, stem: &str) -> PathBuf {
+    dir.join(format!("{stem}_snapshot_package"))
+}
+
+fn snapshot_body(ui: &mut egui::Ui, t: &Tokens, draft: &mut SnapshotPackageDraft) -> (bool, bool) {
+    ui.label(egui::RichText::new(tl!("Export Snapshot Package")).font(theme::semibold(18.0)));
+    ui.add_space(8.0);
+
+    let width = draft.rect[2] - draft.rect[0];
+    let height = draft.rect[3] - draft.rect[1];
+    ui.label(
+        egui::RichText::new(crate::i18n::fmt(
+            tl!("Page {page}, rectangle {width} x {height} pt"),
+            &[("page", &draft.page.saturating_add(1).to_string()), ("width", &format!("{width:.0}")), ("height", &format!("{height:.0}"))],
+        ))
+        .small()
+        .color(t.text_faint),
+    );
+    ui.add_space(10.0);
+
+    egui::Grid::new("snapshot-package").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        let label = ui.label(tl!("Caption"));
+        ui.add(widgets::line(&mut draft.caption).desired_width(320.0)).labelled_by(label.id);
+        ui.end_row();
+
+        let label = ui.label(tl!("Note"));
+        ui.add(widgets::line(&mut draft.note).desired_width(320.0)).labelled_by(label.id);
+        ui.end_row();
+    });
+
+    ui.add_space(8.0);
+    ui.label(
+        egui::RichText::new(tl!("Exports a package with source.pdf, manifest.json, report.tex, and one evidence image.")).small().color(t.text_faint),
+    );
+
+    let (mut apply, mut cancel) = (false, false);
+    ui.add_space(12.0);
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let ok = !draft.caption.trim().is_empty();
+        if ui.add_enabled_ui(ok, |ui| widgets::pill_button(ui, tl!("Export"), true)).inner.clicked() {
+            apply = true;
+        }
+        if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
+            cancel = true;
+        }
+    });
+    (apply, cancel)
+}
+
 pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: ExportKind) -> (bool, bool) {
+    if kind == ExportKind::Image {
+        let response = { app.export_draft.snapshot_package.as_mut().map(|snapshot| snapshot_body(ui, t, snapshot)) };
+        if let Some((apply, cancel)) = response {
+            if cancel {
+                app.export_draft.snapshot_package = None;
+            }
+            return (apply, cancel);
+        }
+    }
+
     let count = app.active_ids().and_then(|(_, id)| app.session.get(id)).map(|d| d.info.pages.len()).unwrap_or(0);
     let d = &mut app.export_draft;
     ui.label(
@@ -215,6 +308,56 @@ fn run(
     }
 }
 
+fn run_snapshot_package_export(
+    src: ExportSource,
+    source_pdf_bytes: Arc<Vec<u8>>,
+    draft: SnapshotPackageDraft,
+    stem: String,
+    dir: PathBuf,
+    status: &ExportStatus,
+    lang: crate::i18n::Lang,
+) {
+    crate::i18n::set_current(lang);
+    let set = |done: usize, msg: Option<String>| {
+        if let Ok(mut s) = status.lock() {
+            *s = Some((done, 1, msg));
+        }
+    };
+
+    set(0, None);
+
+    let mut items = match normalize_snapshot_export_items(
+        src.pages,
+        vec![SnapshotExportItemInput {
+            order: 0,
+            page: draft.page.saturating_add(1),
+            rect: draft.export_rect(),
+            metadata: draft.metadata(),
+            ocr: None,
+        }],
+    ) {
+        Ok(items) => items,
+        Err(e) => {
+            set(1, Some(crate::i18n::fmt(tl!("Export stopped: {e}"), &[("e", &e)])));
+            return;
+        }
+    };
+    if let Err(e) = populate_snapshot_export_ocr(&src, &mut items) {
+        set(1, Some(crate::i18n::fmt(tl!("Export stopped: {e}"), &[("e", &e)])));
+        return;
+    }
+
+    let target = snapshot_package_target(&dir, &stem);
+    let shown = target.display().to_string();
+    let input = SnapshotExportPackageInput { items, render_source: src, source_pdf_bytes };
+
+    let msg = match write_snapshot_export_package(&target, input) {
+        Ok(()) => crate::i18n::fmt(tl!("Exported snapshot package to {dir}"), &[("dir", &shown)]),
+        Err(e) => crate::i18n::fmt(tl!("Export stopped: {e}"), &[("e", &e)]),
+    };
+    set(1, Some(msg));
+}
+
 impl PdfCraftApp {
     /// Start exporting the active document with the dialog's settings.
     pub(crate) fn start_export(&mut self, kind: ExportKind) {
@@ -228,7 +371,42 @@ impl PdfCraftApp {
         }
         let Some(doc) = self.session.get(id) else { return };
         let src = doc.export_source();
-        let stem = doc.name.trim_end_matches(".pdf").trim_end_matches(".PDF").to_string();
+        let source_pdf_bytes = doc.bytes.clone();
+        let stem = export_stem(&doc.name);
+
+        if kind == ExportKind::Image
+            && let Some(snapshot) = self.export_draft.snapshot_package.clone()
+        {
+            let status: ExportStatus = Arc::new(Mutex::new(Some((0, 1, None))));
+            self.export_draft.snapshot_package = None;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let start = move |app: &mut Self, dir: PathBuf, inline: bool| {
+                    let st = status.clone();
+                    let lang = crate::i18n::current();
+                    let work = move || run_snapshot_package_export(src, source_pdf_bytes, snapshot, stem, dir, &st, lang);
+                    if inline {
+                        work();
+                    } else {
+                        std::thread::Builder::new().name("pdfcraft-snapshot-export".into()).spawn(work).ok();
+                    }
+                    app.export_status = Some(status);
+                };
+                match self.export_dir_override.clone() {
+                    Some(d) => start(self, d.into(), true),
+                    None => {
+                        let dialog = rfd::AsyncFileDialog::new().set_title(tl!("Choose a folder for the exported files").to_string());
+                        self.ask_one(crate::pickers::Ask::Folder(dialog), None, move |app, dir| start(app, dir, false));
+                    }
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.notify_tr("Snapshot package export requires the desktop app");
+            }
+            return;
+        }
+
         let pages = self.export_draft.range.pages(src.pages);
         let dpi = self.export_draft.dpi;
         let format = self.export_draft.format;

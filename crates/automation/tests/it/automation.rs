@@ -736,11 +736,148 @@ fn arabic_ligature_actual_text_is_one_editable_word_through_save_reopen() {
 /// annotations must not tell clients the call is read-only or harmless (#130).
 #[test]
 fn file_writing_tools_are_not_read_only() {
-    for name in ["doc_export_data", "accessibility_report", "image_save"] {
+    for name in ["doc_export_data", "accessibility_report", "image_save", "doc_export_snapshot_package"] {
         let t = tools().into_iter().find(|t| t.name == name).unwrap();
         assert!(!t.read_only, "{name} writes a file but advertises read-only");
         assert!(t.destructive, "{name} overwrites its path but advertises non-destructive");
     }
+}
+
+#[test]
+fn snapshot_package_export_through_tools() {
+    let dir = workdir("snapshot-package");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    let args = json!({
+        "doc": doc,
+        "out": "package",
+        "items": [{
+            "page": 1,
+            "rect": [10, 20, 50, 70],
+            "caption": "Page 1 crop",
+            "note": "One item"
+        }]
+    });
+    if !pdfcraft_engine::ocr::available() {
+        assert!(matches!(
+            a.call("doc_export_snapshot_package", &args),
+            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
+        ));
+        return;
+    }
+    let result = ok(&mut a, "doc_export_snapshot_package", args);
+    assert_eq!(result["count"], 1);
+    assert_eq!(result["items"][0]["id"], "item_1");
+    assert_eq!(result["items"][0]["page"], 1);
+
+    let root = dir.join("package");
+    assert!(root.join("manifest.json").is_file());
+    assert!(root.join("source.pdf").is_file());
+    assert!(root.join("report.tex").is_file());
+    assert!(root.join("evidence/item_1.png").is_file());
+
+    let manifest: Value = serde_json::from_str(&std::fs::read_to_string(root.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["items"][0]["page"], 1);
+    assert_eq!(manifest["items"][0]["caption"], "Page 1 crop");
+    assert_eq!(manifest["items"][0]["note"], "One item");
+    assert_eq!(manifest["items"][0]["image"]["path"], "evidence/item_1.png");
+
+    let report = std::fs::read_to_string(root.join("report.tex")).unwrap();
+    assert!(report.contains("\\label{fig:item_1}"));
+    assert!(report.contains("\\caption{Page 1 crop}"));
+    if pdfcraft_engine::ocr::available() {
+        assert!(report.contains("\\paragraph{OCR.}"), "{report}");
+    }
+}
+
+#[test]
+fn snapshot_package_export_keeps_request_order_for_multiple_items() {
+    let dir = workdir("snapshot-package-order");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    let args = json!({
+        "doc": doc,
+        "out": "package",
+        "items": [
+            { "page": 3, "rect": [10, 20, 50, 70], "caption": "Third page" },
+            { "page": 1, "rect": [20, 30, 80, 90], "caption": "First page" }
+        ]
+    });
+    if !pdfcraft_engine::ocr::available() {
+        assert!(matches!(
+            a.call("doc_export_snapshot_package", &args),
+            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
+        ));
+        return;
+    }
+    let result = ok(&mut a, "doc_export_snapshot_package", args);
+    assert_eq!(result["items"][0]["id"], "item_1");
+    assert_eq!(result["items"][0]["page"], 3);
+    assert_eq!(result["items"][1]["id"], "item_2");
+    assert_eq!(result["items"][1]["page"], 1);
+
+    let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("package/manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["items"][0]["page"], 3);
+    assert_eq!(manifest["items"][0]["id"], "item_1");
+    assert_eq!(manifest["items"][1]["page"], 1);
+    assert_eq!(manifest["items"][1]["id"], "item_2");
+}
+
+#[test]
+fn snapshot_package_export_refuses_invalid_rectangles_and_confined_paths() {
+    let dir = workdir("snapshot-package-errors");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    assert!(matches!(
+        a.call(
+            "doc_export_snapshot_package",
+            &json!({
+                "doc": doc,
+                "out": "bad-rect",
+                "items": [{ "page": 1, "rect": [10, 20, 10, 70], "caption": "Flat rect" }]
+            })
+        ),
+        Err(ToolError::InvalidArgs(_))
+    ));
+    assert!(matches!(
+        a.call(
+            "doc_export_snapshot_package",
+            &json!({
+                "doc": doc,
+                "out": "/etc/package",
+                "items": [{ "page": 1, "rect": [10, 20, 50, 70], "caption": "Outside root" }]
+            })
+        ),
+        Err(ToolError::Failed(_))
+    ));
+
+    if !pdfcraft_engine::ocr::available() {
+        assert!(matches!(
+            a.call(
+                "doc_export_snapshot_package",
+                &json!({
+                    "doc": doc,
+                    "out": "needs-models",
+                    "items": [{ "page": 1, "rect": [10, 20, 50, 70], "caption": "Needs OCR" }]
+                })
+            ),
+            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
+        ));
+    }
+}
+
+#[test]
+fn snapshot_package_tool_schema_describes_rectangles_and_metadata() {
+    let tool = tools().into_iter().find(|t| t.name == "doc_export_snapshot_package").unwrap();
+    let props = tool.input_schema["properties"].as_object().unwrap();
+    assert!(!tool.read_only);
+    assert!(tool.destructive);
+    assert_eq!(tool.input_schema["required"], json!(["doc", "out", "items"]));
+    let item = &props["items"]["items"];
+    assert_eq!(item["required"], json!(["page", "rect", "caption"]));
+    assert!(item["properties"]["rect"]["description"].as_str().is_some_and(|s| s.contains("top-left")));
+    assert!(item["properties"]["caption"]["description"].as_str().is_some_and(|s| s.contains("plain-text")));
+    assert!(item["properties"]["note"]["description"].as_str().is_some_and(|s| s.contains("plain-text")));
 }
 
 #[test]

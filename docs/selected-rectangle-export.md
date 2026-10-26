@@ -1,10 +1,12 @@
 # Selected Rectangle Export
 
-Last reviewed: 2026-10-25
+Last reviewed: 2026-10-26
 
 ## Status
 
-This document is the repo-local source of truth for Sprint 1 of `002_selected-rec`.
+This document remains the repo-local source of truth for Sprint 1 of `002_selected-rec`.
+
+For `003_export-flow`, `docs/rectangle-driven-export.md` is the active source of truth. Where the two notes conflict, the rectangle-driven note supersedes this one. In particular, `003_export-flow` is driven by a user-created rectangle with typed metadata, not by selected comment annotations or annotation-derived text.
 
 It defines how PdfCraft will turn a selected comment annotation into one or more snapshot export items under the unchanged package contract in `docs/snapshot-export-spec.md`.
 
