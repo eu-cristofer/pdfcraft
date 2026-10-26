@@ -13,6 +13,7 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Registered** sprint project `docs/changes/001_snapshot-export-contract/` — phased plan for a stable, extensible snapshot export contract with canonical manifest, deterministic LaTeX output, and package validation.
 - **Synced** with upstream `storytold/pdfcraft` `main` (merge commit `77509e78`), bringing this
   fork from upstream `0.8.0` to `0.14.0`.
 - **Added** `docs/techind/update-fork-and-release.md` — runbook for syncing this fork with
