@@ -636,6 +636,7 @@ pub struct PdfCraftApp {
     pub side_panels: side_panels::SidePanels,
     pub session: Session,
     pub views: Vec<DocView>,
+    pub crop_review_project_path: Option<String>,
     pub(crate) closed_tabs: Vec<String>,
     /// `None` shows the Home tab.
     pub active: Option<usize>,
@@ -1105,6 +1106,7 @@ impl PdfCraftApp {
         Self {
             session: Session::new(),
             views: Vec::new(),
+            crop_review_project_path: None,
             closed_tabs: Vec::new(),
             active: None,
             mode: Mode::AllTools,

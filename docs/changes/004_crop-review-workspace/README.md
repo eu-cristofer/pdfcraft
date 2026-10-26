@@ -27,5 +27,5 @@ Status: active
 - [x] [Sprint 3 — Crops right-side panel](./sprint-3.md) — done 2026-10-26
 - [x] [Sprint 4 — Metadata panel and selection synchronization](./sprint-4.md) — done 2026-10-26
 - [x] [Sprint 5 — Rectangle creation tool and overlay persistence](./sprint-5.md) — done 2026-10-26
-- [ ] [Sprint 6 — Project-folder persistence lifecycle](./sprint-6.md)
+- [x] [Sprint 6 — Project-folder persistence lifecycle](./sprint-6.md) — done 2026-10-26
 - [ ] [Sprint 7 — Export integration, OCR, and final hardening](./sprint-7.md)

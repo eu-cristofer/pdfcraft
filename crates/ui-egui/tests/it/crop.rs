@@ -27,6 +27,15 @@ trailer << /Root 1 0 R >>
 
 const WIDTH: f32 = 1400.0;
 
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("pdfcraft-crop-ui-{name}-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 fn harness(setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, PdfCraftApp> {
     let mut h = Harness::builder().with_size(egui::vec2(WIDTH, 900.0)).build_eframe(move |_cc| {
         let mut app = PdfCraftApp::new();
@@ -301,4 +310,46 @@ fn created_crop_rectangles_are_stored_in_pdf_coordinates_not_screen_space() {
     assert!(item.rect_pdf.bottom > 0.0);
     assert_ne!(item.rect_pdf.left, 20.0, "stored x is not the screen-space/view-space x directly");
     assert_ne!(item.rect_pdf.bottom, 35.0, "stored y is not the screen-space/view-space y directly");
+}
+
+#[test]
+fn crop_review_project_save_and_reopen_restores_workspace_state() {
+    let dir = temp_dir("project");
+    let project = dir.join("review-project");
+    let mut h = harness(|app| {
+        seed(
+            app,
+            [
+                item("crop-0002", 2, CropPdfRect { left: 30.0, bottom: 250.0, right: 90.0, top: 330.0 }, "Résumé", 20),
+                item("crop-0001", 1, CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 }, "第二", 10),
+            ],
+        );
+        let id = app.active_ids().expect("active document").1;
+        let store = app.session.crop_review_mut(id).expect("crop review store");
+        let mut first = store.get("crop-0001").expect("first crop").clone();
+        first.note = Some("ação".into());
+        store.upsert(first).expect("updated first crop");
+        let mut second = store.get("crop-0002").expect("second crop").clone();
+        second.note = Some("ocr 日本語".into());
+        store.upsert(second).expect("updated second crop");
+    });
+
+    h.state_mut().save_crop_review_project(project.clone()).unwrap();
+    h.state_mut().open_crop_review_project(&project).unwrap();
+    h.run_steps(4);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    assert_eq!(doc.crop_review().items().len(), 2);
+    assert_eq!(doc.ordered_crop_review_items().iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), vec!["crop-0001", "crop-0002"]);
+    crop_row(&h, "第二 Snapshot · Page 1");
+    crop_row(&h, "Résumé Snapshot · Page 2");
+
+    h.state_mut().set_option("panel", "metadata").unwrap();
+    h.state_mut().views[0].select_crop("crop-0001");
+    h.run_steps(3);
+    assert_eq!(field(&h, "Caption").value().as_deref(), Some("第二"));
+    assert_eq!(field(&h, "Note").value().as_deref(), Some("ação"));
+
+    let _ = std::fs::remove_dir_all(dir);
 }

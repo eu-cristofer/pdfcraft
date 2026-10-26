@@ -3,6 +3,7 @@
 //! Files are picked asynchronously and used on a later frame: desktop builds through `pickers`
 //! (a blocking picker crashes the app on macOS), browsers through `requests`.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use pdfcraft_engine::{DocId, Edit, SplitBy};
@@ -278,6 +279,35 @@ fn read_named(path: &std::path::Path) -> Result<(String, Vec<u8>), (String, Stri
 }
 
 impl PdfCraftApp {
+    pub fn save_crop_review_project(&mut self, dir: PathBuf) -> Result<(), String> {
+        let Some((index, id)) = self.active_ids() else { return Err("open a document first".into()) };
+        let Some(doc) = self.session.get(id) else { return Err("no document".into()) };
+        let crops = doc.crop_review().ordered_items(&doc.info.pages).into_iter().cloned().collect::<Vec<_>>();
+        pdfcraft_engine::export::write_crop_review_project(&dir, doc.bytes.clone(), crops)?;
+        self.crop_review_project_path = Some(dir.to_string_lossy().into_owned());
+        self.views[index].crop_review.ensure_selected(doc);
+        Ok(())
+    }
+
+    pub fn open_crop_review_project(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        let project = pdfcraft_engine::export::load_crop_review_project(dir)?;
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project.pdf".into());
+        self.open_bytes(&name, Some(dir.join("source.pdf").to_string_lossy().into_owned()), project.source_pdf_bytes.as_ref().clone())?;
+        let Some((index, id)) = self.active_ids() else { return Err("the project did not open a document".into()) };
+        {
+            let store = self.session.crop_review_mut(id).map_err(|e| e.to_string())?;
+            for crop in project.crops {
+                store.upsert(crop)?;
+            }
+        }
+        self.crop_review_project_path = Some(dir.to_string_lossy().into_owned());
+        if let Some(doc) = self.session.get(id) {
+            self.views[index].crop_review.ensure_selected(doc);
+        }
+        self.right = Some(crate::RightPanel::Crops);
+        Ok(())
+    }
+
     /// Ask for files to add to the Combine files list (its Add files… button).
     pub fn combine_dialog(&mut self) {
         self.pick_files(FilePurpose::Combine, true);

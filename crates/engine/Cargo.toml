@@ -46,12 +46,16 @@ url = "2.5"
 idna = "1.1"
 icu_properties = "2.3"
 unicode-segmentation = "1.13"
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Already in the graph through lopdf; used only for the local UTC offset ("today"). The workspace
 # entry is std-only; this target adds `clock` for `chrono::Local::now`.
-chrono = { workspace = true, features = ["clock"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+chrono = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 pdfcraft-testkit = { workspace = true }

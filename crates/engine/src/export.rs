@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind, Tile};
+use serde::{Deserialize, Serialize};
 
 use crate::{Document, comment_kind};
 
@@ -238,6 +239,147 @@ impl CropReviewStore {
 
     pub fn ordered_ids<'a>(&'a self, pages: &[pdfcraft_render::PageInfo]) -> Vec<&'a str> {
         self.ordered_items(pages).into_iter().map(|item| item.id.as_str()).collect()
+    }
+}
+
+const CROP_REVIEW_PROJECT_SCHEMA_VERSION: u32 = 1;
+const CROP_REVIEW_PROJECT_JSON_PATH: &str = "project.json";
+const CROP_REVIEW_PROJECT_SOURCE_PDF_PATH: &str = "source.pdf";
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CropReviewProject {
+    pub source_pdf_bytes: Arc<Vec<u8>>,
+    pub crops: Vec<CropReviewItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct CropReviewProjectJson {
+    schema_version: u32,
+    source_pdf: String,
+    crops: Vec<CropReviewProjectCropJson>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct CropReviewProjectCropJson {
+    id: String,
+    kind: String,
+    page_number: usize,
+    rect_pdf: CropReviewProjectRectJson,
+    caption: String,
+    note: Option<String>,
+    ocr_text: Option<String>,
+    ocr_extracted_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+struct CropReviewProjectRectJson {
+    left: f32,
+    bottom: f32,
+    right: f32,
+    top: f32,
+}
+
+impl CropReviewProjectJson {
+    fn from_project(project: &CropReviewProject) -> Self {
+        Self {
+            schema_version: CROP_REVIEW_PROJECT_SCHEMA_VERSION,
+            source_pdf: CROP_REVIEW_PROJECT_SOURCE_PDF_PATH.to_owned(),
+            crops: project.crops.iter().map(CropReviewProjectCropJson::from_item).collect(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.schema_version != CROP_REVIEW_PROJECT_SCHEMA_VERSION {
+            return Err(format!(
+                "crop review project schema version {} is not supported",
+                self.schema_version
+            ));
+        }
+        if self.source_pdf != CROP_REVIEW_PROJECT_SOURCE_PDF_PATH {
+            return Err(format!(
+                "crop review project source_pdf must be {}, got {}",
+                CROP_REVIEW_PROJECT_SOURCE_PDF_PATH, self.source_pdf
+            ));
+        }
+        for crop in &self.crops {
+            crop.validate()?;
+        }
+        Ok(())
+    }
+}
+
+impl CropReviewProjectCropJson {
+    fn from_item(item: &CropReviewItem) -> Self {
+        Self {
+            id: item.id.clone(),
+            kind: item.kind.as_str().to_owned(),
+            page_number: item.page_number,
+            rect_pdf: CropReviewProjectRectJson {
+                left: item.rect_pdf.left,
+                bottom: item.rect_pdf.bottom,
+                right: item.rect_pdf.right,
+                top: item.rect_pdf.top,
+            },
+            caption: item.caption.clone(),
+            note: item.note.clone(),
+            ocr_text: item.ocr_text.clone(),
+            ocr_extracted_at: item.ocr_extracted_at,
+            created_at: item.created_at,
+            updated_at: item.updated_at,
+        }
+    }
+
+    fn into_item(self) -> Result<CropReviewItem, String> {
+        let kind = match self.kind.as_str() {
+            "snapshot" => ExportItemKind::Snapshot,
+            other => return Err(format!("crop kind {other} is not supported")),
+        };
+        let item = CropReviewItem {
+            id: self.id,
+            kind,
+            page_number: self.page_number,
+            rect_pdf: CropPdfRect {
+                left: self.rect_pdf.left,
+                bottom: self.rect_pdf.bottom,
+                right: self.rect_pdf.right,
+                top: self.rect_pdf.top,
+            },
+            caption: self.caption,
+            note: self.note,
+            ocr_text: self.ocr_text,
+            ocr_extracted_at: self.ocr_extracted_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        };
+        item.validate()?;
+        Ok(item)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let kind = match self.kind.as_str() {
+            "snapshot" => ExportItemKind::Snapshot,
+            other => return Err(format!("crop kind {other} is not supported")),
+        };
+        CropReviewItem {
+            id: self.id.clone(),
+            kind,
+            page_number: self.page_number,
+            rect_pdf: CropPdfRect {
+                left: self.rect_pdf.left,
+                bottom: self.rect_pdf.bottom,
+                right: self.rect_pdf.right,
+                top: self.rect_pdf.top,
+            },
+            caption: self.caption.clone(),
+            note: self.note.clone(),
+            ocr_text: self.ocr_text.clone(),
+            ocr_extracted_at: self.ocr_extracted_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+        .validate()
     }
 }
 
@@ -839,7 +981,37 @@ fn create_snapshot_export_staging_dir(target: &Path) -> Result<PathBuf, String> 
     Err(format!("could not create a free staging directory beside {}", target.display()))
 }
 
+fn create_named_staging_dir(target: &Path, family: &str) -> Result<PathBuf, String> {
+    let parent = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let name = target.file_name().ok_or_else(|| format!("{family} target must name a directory"))?.to_string_lossy().into_owned();
+
+    if target.exists() {
+        return Err(format!("{family} target already exists: {}", target.display()));
+    }
+
+    let prefix = format!(".{name}.{family}-{}-", std::process::id());
+    for attempt in 0..128 {
+        let candidate = parent.join(format!("{prefix}{attempt}"));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(format!("could not create {family} staging directory {}: {err}", candidate.display())),
+        }
+    }
+
+    Err(format!("could not create a free staging directory beside {}", target.display()))
+}
+
 fn resolve_snapshot_export_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let relative = normalize_package_relative_path(relative)?;
+    let mut path = root.to_path_buf();
+    for part in relative.split('/') {
+        path.push(part);
+    }
+    Ok(path)
+}
+
+fn resolve_crop_review_project_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let relative = normalize_package_relative_path(relative)?;
     let mut path = root.to_path_buf();
     for part in relative.split('/') {
@@ -855,6 +1027,84 @@ fn write_snapshot_export_file(root: &Path, relative: &str, bytes: &[u8], hooks: 
     }
     hooks.maybe_fail_before_write(relative)?;
     std::fs::write(&path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))
+}
+
+fn write_crop_review_project_file(root: &Path, relative: &str, bytes: &[u8]) -> Result<(), String> {
+    let path = resolve_crop_review_project_path(root, relative)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))
+}
+
+pub fn crop_review_project_json(project: &CropReviewProject) -> Result<String, String> {
+    let json = CropReviewProjectJson::from_project(project);
+    serde_json::to_string_pretty(&json).map(|mut out| {
+        out.push('\n');
+        out
+    }).map_err(|e| format!("failed to serialize crop review project JSON: {e}"))
+}
+
+pub fn write_crop_review_project(target: &Path, source_pdf_bytes: Arc<Vec<u8>>, crops: Vec<CropReviewItem>) -> Result<(), String> {
+    if source_pdf_bytes.is_empty() {
+        return Err("crop review project source.pdf bytes are empty".into());
+    }
+    for crop in &crops {
+        crop.validate()?;
+    }
+    let project = CropReviewProject { source_pdf_bytes, crops };
+    let json = crop_review_project_json(&project)?;
+    let stage = create_named_staging_dir(target, "crop-review-project")?;
+    let result = (|| {
+        write_crop_review_project_file(&stage, CROP_REVIEW_PROJECT_SOURCE_PDF_PATH, project.source_pdf_bytes.as_slice())?;
+        write_crop_review_project_file(&stage, CROP_REVIEW_PROJECT_JSON_PATH, json.as_bytes())?;
+        validate_crop_review_project_dir(&stage, &project, &json)?;
+        std::fs::rename(&stage, target).map_err(|e| format!("could not publish crop review project to {}: {e}", target.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&stage);
+    }
+    result
+}
+
+pub fn load_crop_review_project(root: &Path) -> Result<CropReviewProject, String> {
+    let json_path = resolve_crop_review_project_path(root, CROP_REVIEW_PROJECT_JSON_PATH)?;
+    let json_text = std::fs::read_to_string(&json_path).map_err(|e| format!("could not read {}: {e}", json_path.display()))?;
+    let json: CropReviewProjectJson =
+        serde_json::from_str(&json_text).map_err(|e| format!("crop review project JSON is not valid: {e}"))?;
+    json.validate()?;
+
+    let source_path = resolve_crop_review_project_path(root, &json.source_pdf)?;
+    let source_pdf_bytes = Arc::new(std::fs::read(&source_path).map_err(|e| format!("could not read {}: {e}", source_path.display()))?);
+    if source_pdf_bytes.is_empty() {
+        return Err("crop review project source.pdf bytes are empty".into());
+    }
+
+    let mut crops = Vec::with_capacity(json.crops.len());
+    for crop in json.crops {
+        crops.push(crop.into_item()?);
+    }
+    Ok(CropReviewProject { source_pdf_bytes, crops })
+}
+
+fn validate_crop_review_project_dir(root: &Path, project: &CropReviewProject, json_text: &str) -> Result<(), String> {
+    if !root.is_dir() {
+        return Err(format!("crop review project root {} was not created", root.display()));
+    }
+    let source_path = resolve_crop_review_project_path(root, CROP_REVIEW_PROJECT_SOURCE_PDF_PATH)?;
+    let json_path = resolve_crop_review_project_path(root, CROP_REVIEW_PROJECT_JSON_PATH)?;
+    let staged_source = std::fs::read(&source_path).map_err(|e| format!("could not read {}: {e}", source_path.display()))?;
+    if staged_source != project.source_pdf_bytes.as_slice() {
+        return Err("crop review project source.pdf bytes do not match the provided working file".into());
+    }
+    let staged_json = std::fs::read_to_string(&json_path).map_err(|e| format!("could not read {}: {e}", json_path.display()))?;
+    if staged_json != json_text {
+        return Err("crop review project JSON does not match the generated JSON".into());
+    }
+    let parsed: CropReviewProjectJson = serde_json::from_str(&staged_json).map_err(|e| format!("crop review project JSON is not valid: {e}"))?;
+    parsed.validate()?;
+    Ok(())
 }
 
 fn render_snapshot_export_item_png(renderer: &mut PageRenderer, source: &ExportSource, item: &SnapshotExportItem) -> Result<Vec<u8>, String> {
@@ -1524,6 +1774,139 @@ mod snapshot_export_tests {
         assert_eq!(stored.kind.as_str(), "snapshot");
         assert_eq!(stored.metadata(), SnapshotExportMetadata { caption: "Figure caption".to_owned(), note: Some("Reviewer note".to_owned()) });
         assert_eq!(stored.ocr(), Some(SnapshotExportOcr { text: "Recognized text".to_owned() }));
+    }
+}
+
+#[cfg(test)]
+mod crop_review_project_tests {
+    use super::{CropPdfRect, CropReviewItem, ExportItemKind, load_crop_review_project, write_crop_review_project};
+    use chrono::{TimeZone, Utc};
+    use std::sync::Arc;
+
+    struct TestDir {
+        path: std::path::PathBuf,
+    }
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("pdfcraft-crop-project-{name}-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn child(&self, name: &str) -> std::path::PathBuf {
+            self.path.join(name)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn timestamp(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 26, hour, minute, second).single().unwrap()
+    }
+
+    fn crop(id: &str, page_number: usize, caption: &str, note: Option<&str>, ocr_text: Option<&str>) -> CropReviewItem {
+        CropReviewItem {
+            id: id.to_owned(),
+            kind: ExportItemKind::Snapshot,
+            page_number,
+            rect_pdf: CropPdfRect { left: 12.5, bottom: 44.0, right: 90.0, top: 120.0 },
+            caption: caption.to_owned(),
+            note: note.map(str::to_owned),
+            ocr_text: ocr_text.map(str::to_owned),
+            ocr_extracted_at: ocr_text.map(|_| timestamp(10, 5, 0)),
+            created_at: timestamp(9, 55, 0),
+            updated_at: timestamp(10, 6, 0),
+        }
+    }
+
+    #[test]
+    fn crop_review_project_round_trips_all_fields() {
+        let dir = TestDir::new("round-trip");
+        let target = dir.child("project");
+        let source_pdf = Arc::new(crate::tests::fixture(2));
+        let crops = vec![
+            crop("crop-0001", 1, "Resumo", Some("Observacao com acento"), Some("ocr 日本語")),
+            crop("crop-0002", 2, "第二", Some("nota"), None),
+        ];
+
+        write_crop_review_project(&target, source_pdf.clone(), crops.clone()).unwrap();
+        let loaded = load_crop_review_project(&target).unwrap();
+
+        assert_eq!(loaded.source_pdf_bytes.as_slice(), source_pdf.as_slice());
+        assert_eq!(loaded.crops, crops);
+    }
+
+    #[test]
+    fn crop_review_project_writes_expected_folder_shape() {
+        let dir = TestDir::new("shape");
+        let target = dir.child("project");
+        write_crop_review_project(&target, Arc::new(crate::tests::fixture(1)), vec![crop("crop-0001", 1, "Caption", None, None)]).unwrap();
+
+        assert!(target.join("source.pdf").is_file());
+        assert!(target.join("project.json").is_file());
+
+        let json = std::fs::read_to_string(target.join("project.json")).unwrap();
+        assert!(json.contains("\"schema_version\": 1"));
+        assert!(json.contains("\"source_pdf\": \"source.pdf\""));
+        assert!(json.contains("\"crops\""));
+    }
+
+    #[test]
+    fn crop_review_project_json_remains_utf8_readable() {
+        let dir = TestDir::new("utf8");
+        let target = dir.child("project");
+        write_crop_review_project(
+            &target,
+            Arc::new(crate::tests::fixture(1)),
+            vec![crop("crop-0001", 1, "Résumé 日本語", Some("ação"), Some("ocr çã"))],
+        )
+        .unwrap();
+
+        let json = std::fs::read_to_string(target.join("project.json")).unwrap();
+        assert!(json.contains("Résumé 日本語"), "{json}");
+        assert!(json.contains("ação"), "{json}");
+        assert!(json.contains("ocr çã"), "{json}");
+        assert!(!json.contains("\\u"), "{json}");
+    }
+
+    #[test]
+    fn crop_review_project_rejects_invalid_source_pdf_reference() {
+        let dir = TestDir::new("bad-source");
+        let target = dir.child("project");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("source.pdf"), crate::tests::fixture(1)).unwrap();
+        std::fs::write(
+            target.join("project.json"),
+            b"{\n  \"schema_version\": 1,\n  \"source_pdf\": \"../outside.pdf\",\n  \"crops\": []\n}\n",
+        )
+        .unwrap();
+
+        let err = load_crop_review_project(&target).unwrap_err();
+        assert!(err.contains("source_pdf must be source.pdf"), "{err}");
+    }
+
+    #[test]
+    fn crop_review_project_rejects_unsupported_schema_version() {
+        let dir = TestDir::new("bad-version");
+        let target = dir.child("project");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("source.pdf"), crate::tests::fixture(1)).unwrap();
+        std::fs::write(
+            target.join("project.json"),
+            b"{\n  \"schema_version\": 2,\n  \"source_pdf\": \"source.pdf\",\n  \"crops\": []\n}\n",
+        )
+        .unwrap();
+
+        let err = load_crop_review_project(&target).unwrap_err();
+        assert!(err.contains("schema version 2 is not supported"), "{err}");
     }
 }
 
