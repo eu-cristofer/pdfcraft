@@ -444,6 +444,7 @@ pub struct Document {
     /// What the last successful [`Session::apply`] wrote that its fonts can't draw: kept as typed,
     /// drawn with `?` in its place (see [`TextNotice`]). The interface shows it; tools return it.
     pub edit_notices: Vec<TextNotice>,
+    pub crop_review: export::CropReviewStore,
 }
 
 /// Text an edit stored as typed but drew with `?` in place of `ch`, because the font it is drawn
@@ -617,6 +618,14 @@ impl Document {
     /// A counter that changes with every edit (for caches of derived data).
     pub fn edit_generation(&self) -> u64 {
         self.generation
+    }
+
+    pub fn crop_review(&self) -> &export::CropReviewStore {
+        &self.crop_review
+    }
+
+    pub fn ordered_crop_review_items(&self) -> Vec<&export::CropReviewItem> {
+        self.crop_review.ordered_items(&self.info.pages)
     }
 
     /// Edit a PDF ▸ Edit text: the lines of existing text on `page` (0-based).
@@ -3974,6 +3983,7 @@ impl Session {
             fonts_stale: false,
             xfa_warnings: Vec::new(),
             edit_notices: Vec::new(),
+            crop_review: export::CropReviewStore::new(),
         }
     }
 
@@ -5415,6 +5425,14 @@ impl Session {
 
     pub fn get(&self, id: DocId) -> Option<&Document> {
         self.docs.iter().find(|d| d.id == id)
+    }
+
+    pub fn crop_review(&self, id: DocId) -> Option<&export::CropReviewStore> {
+        self.get(id).map(Document::crop_review)
+    }
+
+    pub fn crop_review_mut(&mut self, id: DocId) -> Result<&mut export::CropReviewStore, EditError> {
+        Ok(&mut self.doc_mut(id)?.crop_review)
     }
 
     /// Read document `id`'s font list again if content edits since the last full inspection may

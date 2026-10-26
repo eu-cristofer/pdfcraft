@@ -23,7 +23,7 @@ Each run MUST:
 Status: active
 
 - [x] [Sprint 1 — Workspace contract and product boundaries](./sprint-1.md) — done 2026-10-26
-- [ ] [Sprint 2 — Crop model and ordered store](./sprint-2.md)
+- [x] [Sprint 2 — Crop model and ordered store](./sprint-2.md) — done 2026-10-26
 - [ ] [Sprint 3 — Crops right-side panel](./sprint-3.md)
 - [ ] [Sprint 4 — Metadata panel and selection synchronization](./sprint-4.md)
 - [ ] [Sprint 5 — Rectangle creation tool and overlay persistence](./sprint-5.md)

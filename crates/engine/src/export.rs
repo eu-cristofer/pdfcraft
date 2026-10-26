@@ -4,9 +4,11 @@
 //! text, from a
 //! document's working file (so unsaved edits and hidden layers are respected, as on screen).
 
+use std::cmp::Ordering;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind, Tile};
 
 use crate::{Document, comment_kind};
@@ -93,6 +95,172 @@ impl ExportItemKind {
             ExportItemKind::Snapshot => "snapshot",
         }
     }
+}
+
+/// One crop rectangle persisted in PDF/document coordinate space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CropPdfRect {
+    pub left: f32,
+    pub bottom: f32,
+    pub right: f32,
+    pub top: f32,
+}
+
+impl CropPdfRect {
+    pub fn validate(self) -> Result<Self, String> {
+        if !self.left.is_finite() || !self.bottom.is_finite() || !self.right.is_finite() || !self.top.is_finite() {
+            return Err("crop rectangle coordinates must be finite".into());
+        }
+        if self.right <= self.left || self.top <= self.bottom {
+            return Err("crop rectangle must have positive width and height".into());
+        }
+        Ok(self)
+    }
+
+    pub fn from_user_rect(rect: [f32; 4]) -> Result<Self, String> {
+        CropPdfRect { left: rect[0].min(rect[2]), bottom: rect[1].min(rect[3]), right: rect[0].max(rect[2]), top: rect[1].max(rect[3]) }.validate()
+    }
+
+    pub fn user_rect(self) -> [f32; 4] {
+        [self.left, self.bottom, self.right, self.top]
+    }
+
+    pub fn to_export_rect(self, page: &pdfcraft_render::PageInfo) -> Result<ExportRect, String> {
+        let rect = self.validate()?;
+        let corners = [
+            page.user_to_view(rect.left, rect.bottom),
+            page.user_to_view(rect.left, rect.top),
+            page.user_to_view(rect.right, rect.bottom),
+            page.user_to_view(rect.right, rect.top),
+        ];
+        let mut left = f32::INFINITY;
+        let mut top = f32::INFINITY;
+        let mut right = f32::NEG_INFINITY;
+        let mut bottom = f32::NEG_INFINITY;
+        for [x, y] in corners {
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x);
+            bottom = bottom.max(y);
+        }
+        ExportRect { x: left, y: top, width: right - left, height: bottom - top }.validate()
+    }
+}
+
+/// One persistent crop-review item owned by the engine/document rather than the UI.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CropReviewItem {
+    pub id: String,
+    pub kind: ExportItemKind,
+    pub page_number: usize,
+    pub rect_pdf: CropPdfRect,
+    pub caption: String,
+    pub note: Option<String>,
+    pub ocr_text: Option<String>,
+    pub ocr_extracted_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl CropReviewItem {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.id.trim().is_empty() {
+            return Err("crop id must not be empty".into());
+        }
+        if self.page_number == 0 {
+            return Err("crop page number must be 1-based".into());
+        }
+        self.rect_pdf.validate()?;
+        if self.ocr_extracted_at.is_some() && self.ocr_text.is_none() {
+            return Err("crop OCR timestamp requires OCR text".into());
+        }
+        if self.updated_at < self.created_at {
+            return Err("crop updated_at must not be earlier than created_at".into());
+        }
+        Ok(())
+    }
+
+    pub fn metadata(&self) -> SnapshotExportMetadata {
+        SnapshotExportMetadata { caption: self.caption.clone(), note: self.note.clone() }
+    }
+
+    pub fn ocr(&self) -> Option<SnapshotExportOcr> {
+        self.ocr_text.as_ref().map(|text| SnapshotExportOcr { text: text.clone() })
+    }
+
+    pub fn export_rect(&self, page: &pdfcraft_render::PageInfo) -> Result<ExportRect, String> {
+        self.rect_pdf.to_export_rect(page)
+    }
+
+    pub fn export_item_input(&self, order: usize, page: &pdfcraft_render::PageInfo) -> Result<SnapshotExportItemInput, String> {
+        self.validate()?;
+        Ok(SnapshotExportItemInput { order, page: self.page_number, rect: self.export_rect(page)?, metadata: self.metadata(), ocr: self.ocr() })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CropReviewStore {
+    items: Vec<CropReviewItem>,
+}
+
+impl CropReviewStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn items(&self) -> &[CropReviewItem] {
+        &self.items
+    }
+
+    pub fn get(&self, id: &str) -> Option<&CropReviewItem> {
+        self.items.iter().find(|item| item.id == id)
+    }
+
+    pub fn upsert(&mut self, item: CropReviewItem) -> Result<Option<CropReviewItem>, String> {
+        item.validate()?;
+        if let Some(existing) = self.items.iter_mut().find(|existing| existing.id == item.id) {
+            return Ok(Some(std::mem::replace(existing, item)));
+        }
+        self.items.push(item);
+        Ok(None)
+    }
+
+    pub fn remove(&mut self, id: &str) -> Option<CropReviewItem> {
+        let index = self.items.iter().position(|item| item.id == id)?;
+        Some(self.items.remove(index))
+    }
+
+    pub fn ordered_items<'a>(&'a self, pages: &[pdfcraft_render::PageInfo]) -> Vec<&'a CropReviewItem> {
+        let mut items = self.items.iter().collect::<Vec<_>>();
+        items.sort_by(|left, right| compare_crop_review_items(left, right, pages));
+        items
+    }
+
+    pub fn ordered_ids<'a>(&'a self, pages: &[pdfcraft_render::PageInfo]) -> Vec<&'a str> {
+        self.ordered_items(pages).into_iter().map(|item| item.id.as_str()).collect()
+    }
+}
+
+fn compare_crop_review_items(left: &CropReviewItem, right: &CropReviewItem, pages: &[pdfcraft_render::PageInfo]) -> Ordering {
+    left.page_number
+        .cmp(&right.page_number)
+        .then_with(|| compare_f32(crop_review_sort_key(left, pages).0, crop_review_sort_key(right, pages).0))
+        .then_with(|| compare_f32(crop_review_sort_key(left, pages).1, crop_review_sort_key(right, pages).1))
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+fn crop_review_sort_key(item: &CropReviewItem, pages: &[pdfcraft_render::PageInfo]) -> (f32, f32) {
+    let Some(page) = item.page_number.checked_sub(1).and_then(|index| pages.get(index)) else {
+        return (-item.rect_pdf.top, item.rect_pdf.left);
+    };
+    match item.rect_pdf.to_export_rect(page) {
+        Ok(rect) => (rect.y, rect.x),
+        Err(_) => (-item.rect_pdf.top, item.rect_pdf.left),
+    }
+}
+
+fn compare_f32(left: f32, right: f32) -> Ordering {
+    left.partial_cmp(&right).unwrap_or(Ordering::Equal)
 }
 
 /// One normalized item in the canonical export order.
@@ -1147,9 +1315,11 @@ mod image_name_tests {
 #[cfg(test)]
 mod snapshot_export_tests {
     use super::{
-        ExportItemKind, ExportRect, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportOcr, normalize_package_relative_path,
-        normalize_snapshot_export_items,
+        CropPdfRect, CropReviewItem, CropReviewStore, ExportItemKind, ExportRect, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportOcr,
+        normalize_package_relative_path, normalize_snapshot_export_items,
     };
+    use chrono::{TimeZone, Utc};
+    use pdfcraft_render::PageInfo;
 
     fn metadata(caption: &str, note: Option<&str>) -> SnapshotExportMetadata {
         SnapshotExportMetadata { caption: caption.into(), note: note.map(str::to_owned) }
@@ -1162,6 +1332,29 @@ mod snapshot_export_tests {
             rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
             metadata: metadata(caption, None),
             ocr: None,
+        }
+    }
+
+    fn timestamp(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 26, hour, minute, second).single().unwrap()
+    }
+
+    fn page(width: f32, height: f32, crop: [f32; 4], rotation: u16) -> PageInfo {
+        PageInfo { width, height, label: "1".into(), crop, rotation }
+    }
+
+    fn crop_item(id: &str, page_number: usize, rect_pdf: CropPdfRect) -> CropReviewItem {
+        CropReviewItem {
+            id: id.to_owned(),
+            kind: ExportItemKind::Snapshot,
+            page_number,
+            rect_pdf,
+            caption: format!("caption-{id}"),
+            note: Some(format!("note-{id}")),
+            ocr_text: Some(format!("ocr-{id}")),
+            ocr_extracted_at: Some(timestamp(9, 15, 0)),
+            created_at: timestamp(9, 0, 0),
+            updated_at: timestamp(9, 30, 0),
         }
     }
 
@@ -1273,6 +1466,64 @@ mod snapshot_export_tests {
         )
         .unwrap_err();
         assert_eq!(non_finite, "snapshot rectangle coordinates must be finite");
+    }
+
+    #[test]
+    fn crop_items_order_by_page_display_y_display_x_then_id() {
+        let mut store = CropReviewStore::new();
+        store.upsert(crop_item("page-1-bottom", 1, CropPdfRect::from_user_rect([15.0, 100.0, 55.0, 140.0]).unwrap())).unwrap();
+        store.upsert(crop_item("page-1-top-right", 1, CropPdfRect::from_user_rect([40.0, 680.0, 80.0, 720.0]).unwrap())).unwrap();
+        store.upsert(crop_item("page-1-top-left-b", 1, CropPdfRect::from_user_rect([10.0, 680.0, 50.0, 720.0]).unwrap())).unwrap();
+        store.upsert(crop_item("page-2", 2, CropPdfRect::from_user_rect([5.0, 500.0, 25.0, 540.0]).unwrap())).unwrap();
+        store.upsert(crop_item("page-1-top-left-a", 1, CropPdfRect::from_user_rect([10.0, 680.0, 50.0, 720.0]).unwrap())).unwrap();
+
+        let pages = [page(300.0, 800.0, [0.0, 0.0, 300.0, 800.0], 0), page(300.0, 600.0, [0.0, 0.0, 300.0, 600.0], 0)];
+        assert_eq!(store.ordered_ids(&pages), vec!["page-1-top-left-a", "page-1-top-left-b", "page-1-top-right", "page-1-bottom", "page-2"]);
+    }
+
+    #[test]
+    fn crop_geometry_is_stored_in_pdf_space_and_round_trips_through_page_transforms() {
+        let info = page(100.0, 200.0, [0.0, 0.0, 200.0, 100.0], 90);
+        let display = ExportRect { x: 40.0, y: 20.0, width: 30.0, height: 60.0 };
+        let rect_pdf =
+            CropPdfRect::from_user_rect(info.view_rect_to_user([display.x, display.y, display.x + display.width, display.y + display.height]))
+                .unwrap();
+
+        assert!((rect_pdf.left - 20.0).abs() < 1e-3, "left: {}", rect_pdf.left);
+        assert!((rect_pdf.bottom - 40.0).abs() < 1e-3, "bottom: {}", rect_pdf.bottom);
+        assert!((rect_pdf.right - 80.0).abs() < 1e-3, "right: {}", rect_pdf.right);
+        assert!((rect_pdf.top - 70.0).abs() < 1e-3, "top: {}", rect_pdf.top);
+        assert_ne!(rect_pdf.left, display.x, "stored x is in PDF space, not viewport space");
+        assert_ne!(rect_pdf.bottom, display.y, "stored y is in PDF space, not viewport space");
+        let round_trip = rect_pdf.to_export_rect(&info).unwrap();
+        assert!((round_trip.x - display.x).abs() < 1e-3, "x: {}", round_trip.x);
+        assert!((round_trip.y - display.y).abs() < 1e-3, "y: {}", round_trip.y);
+        assert!((round_trip.width - display.width).abs() < 1e-3, "width: {}", round_trip.width);
+        assert!((round_trip.height - display.height).abs() < 1e-3, "height: {}", round_trip.height);
+    }
+
+    #[test]
+    fn crop_store_round_trips_identifier_metadata_ocr_and_timestamps() {
+        let mut store = CropReviewStore::new();
+        let item = CropReviewItem {
+            id: "crop-123".to_owned(),
+            kind: ExportItemKind::Snapshot,
+            page_number: 3,
+            rect_pdf: CropPdfRect::from_user_rect([12.5, 44.0, 90.0, 120.0]).unwrap(),
+            caption: "Figure caption".to_owned(),
+            note: Some("Reviewer note".to_owned()),
+            ocr_text: Some("Recognized text".to_owned()),
+            ocr_extracted_at: Some(timestamp(10, 5, 0)),
+            created_at: timestamp(9, 55, 0),
+            updated_at: timestamp(10, 6, 0),
+        };
+
+        store.upsert(item.clone()).unwrap();
+        let stored = store.get("crop-123").unwrap();
+        assert_eq!(stored, &item);
+        assert_eq!(stored.kind.as_str(), "snapshot");
+        assert_eq!(stored.metadata(), SnapshotExportMetadata { caption: "Figure caption".to_owned(), note: Some("Reviewer note".to_owned()) });
+        assert_eq!(stored.ocr(), Some(SnapshotExportOcr { text: "Recognized text".to_owned() }));
     }
 }
 
