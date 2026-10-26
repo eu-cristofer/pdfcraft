@@ -2,8 +2,6 @@
 
 Build a persistent crop-review workspace inside PdfCraft's existing document shell: a dedicated rectangle-annotation workflow with right-side Crops and Metadata panels, synchronized overlay selection, project persistence, and export driven from the stored crop dataset rather than from the original snapshot tool.
 
-# 004_crop-review-workspace — Loop Protocol
-
 Each run MUST:
 1. Read this README top to bottom. Pick the FIRST sprint whose checkbox is `[ ]`.
     Never skip ahead; never start a sprint whose predecessor is unchecked.
@@ -19,8 +17,6 @@ Each run MUST:
 7. Commit in one commit: `<004_crop-review-workspace> sprint N: <title>`.
 8. When all sprints are checked, mark the project `Status: ready to archive` and
    archive it later with `/sprint-loop archive <project>`.
-
-Status: active
 
 - [x] [Sprint 1 — Workspace contract and product boundaries](./sprint-1.md) — done 2026-10-26
 - [x] [Sprint 2 — Crop model and ordered store](./sprint-2.md) — done 2026-10-26
