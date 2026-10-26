@@ -42,6 +42,9 @@ impl ExportRect {
         if !self.x.is_finite() || !self.y.is_finite() {
             return Err("snapshot rectangle coordinates must be finite".into());
         }
+        if self.x < 0.0 || self.y < 0.0 {
+            return Err("snapshot rectangle coordinates must be non-negative".into());
+        }
         if !self.width.is_finite() || !self.height.is_finite() || self.width <= 0.0 || self.height <= 0.0 {
             return Err("snapshot rectangle size must be finite and positive".into());
         }
@@ -182,6 +185,223 @@ pub fn normalize_snapshot_export_items(page_count: usize, items: Vec<SnapshotExp
         });
     }
     Ok(normalized)
+}
+
+const SNAPSHOT_EXPORT_PACKAGE_KIND: &str = "pdfcraft.snapshot_export";
+const SNAPSHOT_EXPORT_MANIFEST_VERSION: &str = "1.0";
+const SNAPSHOT_EXPORT_SOURCE_PDF_PATH: &str = "source.pdf";
+const SNAPSHOT_EXPORT_SOURCE_PDF_STATE: &str = "working-copy";
+const SNAPSHOT_EXPORT_COORDINATE_PAGE_ORIGIN: &str = "top-left";
+const SNAPSHOT_EXPORT_COORDINATE_PAGE_SPACE: &str = "display";
+const SNAPSHOT_EXPORT_COORDINATE_UNITS: &str = "pt";
+const SNAPSHOT_EXPORT_COORDINATE_PAGE_ROTATION: &str = "already-applied";
+const SNAPSHOT_EXPORT_RENDERING_SOURCE: &str = "display-equivalent";
+const SNAPSHOT_EXPORT_RENDERING_IMAGE_FORMAT: &str = "png";
+const SNAPSHOT_EXPORT_PIXELS_PER_POINT: f32 = 2.0;
+
+fn snapshot_export_image_dimension(points: f32) -> Result<u32, String> {
+    let pixels = (f64::from(points) * f64::from(SNAPSHOT_EXPORT_PIXELS_PER_POINT)).round();
+    if !pixels.is_finite() || pixels <= 0.0 || pixels > f64::from(u32::MAX) {
+        return Err("snapshot image dimensions are out of range".into());
+    }
+    Ok(pixels as u32)
+}
+
+fn snapshot_export_image_size(rect: ExportRect) -> Result<(u32, u32), String> {
+    let rect = rect.validate()?;
+    Ok((snapshot_export_image_dimension(rect.width)?, snapshot_export_image_dimension(rect.height)?))
+}
+
+fn validate_snapshot_export_contract_items(items: &[SnapshotExportItem]) -> Result<Vec<(u32, u32)>, String> {
+    if items.is_empty() {
+        return Err("snapshot export requires at least one item".into());
+    }
+
+    let mut image_sizes = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let expected_id = snapshot_export_item_id(index)?;
+        if item.id != expected_id {
+            return Err(format!("snapshot item {} must have id {expected_id}", index + 1));
+        }
+        if item.kind != ExportItemKind::Snapshot {
+            return Err(format!("snapshot item {} must have kind 'snapshot', got '{}'", item.id, item.kind.as_str()));
+        }
+        if item.page == 0 {
+            return Err(format!("snapshot item {} page must be at least 1", item.id));
+        }
+
+        let expected_image_path = snapshot_export_image_path(&item.id)?;
+        if item.image_path != expected_image_path {
+            return Err(format!("snapshot item {} must have image path {expected_image_path}", item.id));
+        }
+
+        image_sizes.push(snapshot_export_image_size(item.rect)?);
+    }
+
+    Ok(image_sizes)
+}
+
+fn json_string(value: &str) -> Result<String, String> {
+    serde_json::to_string(value).map_err(|e| format!("failed to serialize snapshot export JSON string: {e}"))
+}
+
+fn json_f32(value: f32) -> Result<String, String> {
+    serde_json::to_string(&value).map_err(|e| format!("failed to serialize snapshot export JSON number: {e}"))
+}
+
+fn latex_escape_plain_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => escaped.push_str(r"\textbackslash{}"),
+            '{' => escaped.push_str(r"\{"),
+            '}' => escaped.push_str(r"\}"),
+            '%' => escaped.push_str(r"\%"),
+            '&' => escaped.push_str(r"\&"),
+            '$' => escaped.push_str(r"\$"),
+            '#' => escaped.push_str(r"\#"),
+            '_' => escaped.push_str(r"\_"),
+            '^' => escaped.push_str(r"\^{}"),
+            '~' => escaped.push_str(r"\~{}"),
+            '\r' => {}
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+/// Serializes the canonical v1 `manifest.json` from the normalized ordered item list.
+pub fn snapshot_export_manifest_json(items: &[SnapshotExportItem]) -> Result<String, String> {
+    let image_sizes = validate_snapshot_export_contract_items(items)?;
+    let mut out = String::new();
+
+    out.push_str("{\n");
+    out.push_str("  \"package_kind\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_PACKAGE_KIND)?);
+    out.push_str(",\n");
+    out.push_str("  \"manifest_version\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_MANIFEST_VERSION)?);
+    out.push_str(",\n");
+    out.push_str("  \"source_pdf\": {\n");
+    out.push_str("    \"path\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_SOURCE_PDF_PATH)?);
+    out.push_str(",\n");
+    out.push_str("    \"state\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_SOURCE_PDF_STATE)?);
+    out.push('\n');
+    out.push_str("  },\n");
+    out.push_str("  \"coordinate_space\": {\n");
+    out.push_str("    \"page_origin\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_COORDINATE_PAGE_ORIGIN)?);
+    out.push_str(",\n");
+    out.push_str("    \"page_space\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_COORDINATE_PAGE_SPACE)?);
+    out.push_str(",\n");
+    out.push_str("    \"units\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_COORDINATE_UNITS)?);
+    out.push_str(",\n");
+    out.push_str("    \"page_rotation\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_COORDINATE_PAGE_ROTATION)?);
+    out.push('\n');
+    out.push_str("  },\n");
+    out.push_str("  \"rendering\": {\n");
+    out.push_str("    \"snapshot_source\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_RENDERING_SOURCE)?);
+    out.push_str(",\n");
+    out.push_str("    \"image_format\": ");
+    out.push_str(&json_string(SNAPSHOT_EXPORT_RENDERING_IMAGE_FORMAT)?);
+    out.push_str(",\n");
+    out.push_str("    \"pixels_per_point\": ");
+    out.push_str(&json_f32(SNAPSHOT_EXPORT_PIXELS_PER_POINT)?);
+    out.push('\n');
+    out.push_str("  },\n");
+    out.push_str("  \"items\": [\n");
+
+    let item_count = items.len();
+    for (index, (item, (width_px, height_px))) in items.iter().zip(image_sizes).enumerate() {
+        out.push_str("    {\n");
+        out.push_str("      \"id\": ");
+        out.push_str(&json_string(&item.id)?);
+        out.push_str(",\n");
+        out.push_str("      \"kind\": ");
+        out.push_str(&json_string(item.kind.as_str())?);
+        out.push_str(",\n");
+        out.push_str("      \"page\": ");
+        out.push_str(&item.page.to_string());
+        out.push_str(",\n");
+        out.push_str("      \"rect\": {\n");
+        out.push_str("        \"x\": ");
+        out.push_str(&json_f32(item.rect.x)?);
+        out.push_str(",\n");
+        out.push_str("        \"y\": ");
+        out.push_str(&json_f32(item.rect.y)?);
+        out.push_str(",\n");
+        out.push_str("        \"width\": ");
+        out.push_str(&json_f32(item.rect.width)?);
+        out.push_str(",\n");
+        out.push_str("        \"height\": ");
+        out.push_str(&json_f32(item.rect.height)?);
+        out.push('\n');
+        out.push_str("      },\n");
+        out.push_str("      \"image\": {\n");
+        out.push_str("        \"path\": ");
+        out.push_str(&json_string(&item.image_path)?);
+        out.push_str(",\n");
+        out.push_str("        \"width_px\": ");
+        out.push_str(&width_px.to_string());
+        out.push_str(",\n");
+        out.push_str("        \"height_px\": ");
+        out.push_str(&height_px.to_string());
+        out.push('\n');
+        out.push_str("      },\n");
+        out.push_str("      \"caption\": ");
+        out.push_str(&json_string(&item.caption)?);
+        if let Some(note) = item.note.as_deref() {
+            out.push_str(",\n");
+            out.push_str("      \"note\": ");
+            out.push_str(&json_string(note)?);
+            out.push('\n');
+        } else {
+            out.push('\n');
+        }
+        out.push_str("    }");
+        if index + 1 != item_count {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+
+    out.push_str("  ]\n");
+    out.push_str("}\n");
+    Ok(out)
+}
+
+/// Renders the deterministic v1 `report.tex` from the normalized ordered item list.
+pub fn snapshot_export_report_tex(items: &[SnapshotExportItem]) -> Result<String, String> {
+    validate_snapshot_export_contract_items(items)?;
+
+    let mut out = String::from("\\section*{Snapshot Evidence}\n\n");
+    for (index, item) in items.iter().enumerate() {
+        out.push_str("\\begin{figure}[htbp]\n");
+        out.push_str("\\centering\n");
+        out.push_str(&format!("\\includegraphics[width=\\linewidth]{{{}}}\n", item.image_path));
+        out.push_str(&format!("\\caption{{{}}}\n", latex_escape_plain_text(&item.caption)));
+        out.push_str(&format!("\\label{{fig:{}}}\n", item.id));
+        out.push_str("\\end{figure}\n");
+
+        if let Some(note) = item.note.as_deref() {
+            out.push('\n');
+            out.push_str("\\paragraph{Note.}\n");
+            out.push_str(&latex_escape_plain_text(note));
+            out.push('\n');
+        }
+
+        if index + 1 != items.len() {
+            out.push('\n');
+        }
+    }
+
+    Ok(out)
 }
 
 impl Exporter {
@@ -468,6 +688,19 @@ mod snapshot_export_tests {
         let bad_page = normalize_snapshot_export_items(2, vec![input(0, 0, "bad page")]).unwrap_err();
         assert_eq!(bad_page, "page 0 does not exist");
 
+        let negative_rect = normalize_snapshot_export_items(
+            2,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: -1.0, y: 20.0, width: 30.0, height: 40.0 },
+                caption: "bad rect".into(),
+                note: None,
+            }],
+        )
+        .unwrap_err();
+        assert_eq!(negative_rect, "snapshot rectangle coordinates must be non-negative");
+
         let bad_rect = normalize_snapshot_export_items(
             2,
             vec![SnapshotExportItemInput {
@@ -493,6 +726,149 @@ mod snapshot_export_tests {
         )
         .unwrap_err();
         assert_eq!(non_finite, "snapshot rectangle coordinates must be finite");
+    }
+}
+
+#[cfg(test)]
+mod snapshot_export_artifact_tests {
+    use serde_json::Value;
+
+    use super::{
+        ExportRect, SnapshotExportItem, SnapshotExportItemInput, normalize_snapshot_export_items, snapshot_export_manifest_json,
+        snapshot_export_report_tex,
+    };
+
+    fn sample_items() -> Vec<SnapshotExportItem> {
+        normalize_snapshot_export_items(
+            4,
+            vec![
+                SnapshotExportItemInput {
+                    order: 20,
+                    page: 4,
+                    rect: ExportRect { x: 90.5, y: 244.0, width: 180.0, height: 110.0 },
+                    caption: "Comment {callout} _ review".into(),
+                    note: None,
+                },
+                SnapshotExportItemInput {
+                    order: 10,
+                    page: 2,
+                    rect: ExportRect { x: 72.0, y: 128.0, width: 216.0, height: 96.0 },
+                    caption: "50% approved & signed #1".into(),
+                    note: Some(r"Path C:\exports\item_{1} uses ~ temp ^ dir and costs $5.".into()),
+                },
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn manifest_json_matches_the_v1_contract_golden_output() {
+        let manifest = snapshot_export_manifest_json(&sample_items()).unwrap();
+
+        let expected = concat!(
+            "{\n",
+            "  \"package_kind\": \"pdfcraft.snapshot_export\",\n",
+            "  \"manifest_version\": \"1.0\",\n",
+            "  \"source_pdf\": {\n",
+            "    \"path\": \"source.pdf\",\n",
+            "    \"state\": \"working-copy\"\n",
+            "  },\n",
+            "  \"coordinate_space\": {\n",
+            "    \"page_origin\": \"top-left\",\n",
+            "    \"page_space\": \"display\",\n",
+            "    \"units\": \"pt\",\n",
+            "    \"page_rotation\": \"already-applied\"\n",
+            "  },\n",
+            "  \"rendering\": {\n",
+            "    \"snapshot_source\": \"display-equivalent\",\n",
+            "    \"image_format\": \"png\",\n",
+            "    \"pixels_per_point\": 2.0\n",
+            "  },\n",
+            "  \"items\": [\n",
+            "    {\n",
+            "      \"id\": \"item_1\",\n",
+            "      \"kind\": \"snapshot\",\n",
+            "      \"page\": 2,\n",
+            "      \"rect\": {\n",
+            "        \"x\": 72.0,\n",
+            "        \"y\": 128.0,\n",
+            "        \"width\": 216.0,\n",
+            "        \"height\": 96.0\n",
+            "      },\n",
+            "      \"image\": {\n",
+            "        \"path\": \"evidence/item_1.png\",\n",
+            "        \"width_px\": 432,\n",
+            "        \"height_px\": 192\n",
+            "      },\n",
+            "      \"caption\": \"50% approved & signed #1\",\n",
+            "      \"note\": \"Path C:\\\\exports\\\\item_{1} uses ~ temp ^ dir and costs $5.\"\n",
+            "    },\n",
+            "    {\n",
+            "      \"id\": \"item_2\",\n",
+            "      \"kind\": \"snapshot\",\n",
+            "      \"page\": 4,\n",
+            "      \"rect\": {\n",
+            "        \"x\": 90.5,\n",
+            "        \"y\": 244.0,\n",
+            "        \"width\": 180.0,\n",
+            "        \"height\": 110.0\n",
+            "      },\n",
+            "      \"image\": {\n",
+            "        \"path\": \"evidence/item_2.png\",\n",
+            "        \"width_px\": 360,\n",
+            "        \"height_px\": 220\n",
+            "      },\n",
+            "      \"caption\": \"Comment {callout} _ review\"\n",
+            "    }\n",
+            "  ]\n",
+            "}\n"
+        );
+
+        assert_eq!(manifest, expected);
+    }
+
+    #[test]
+    fn report_tex_matches_the_snapshot_template_golden_output() {
+        let tex = snapshot_export_report_tex(&sample_items()).unwrap();
+
+        let expected = concat!(
+            "\\section*{Snapshot Evidence}\n\n",
+            "\\begin{figure}[htbp]\n",
+            "\\centering\n",
+            "\\includegraphics[width=\\linewidth]{evidence/item_1.png}\n",
+            "\\caption{50\\% approved \\& signed \\#1}\n",
+            "\\label{fig:item_1}\n",
+            "\\end{figure}\n\n",
+            "\\paragraph{Note.}\n",
+            "Path C:\\textbackslash{}exports\\textbackslash{}item\\_\\{1\\} uses \\~{} temp \\^{} dir and costs \\$5.\n\n",
+            "\\begin{figure}[htbp]\n",
+            "\\centering\n",
+            "\\includegraphics[width=\\linewidth]{evidence/item_2.png}\n",
+            "\\caption{Comment \\{callout\\} \\_ review}\n",
+            "\\label{fig:item_2}\n",
+            "\\end{figure}\n"
+        );
+
+        assert_eq!(tex, expected);
+    }
+
+    #[test]
+    fn manifest_items_and_latex_blocks_stay_aligned() {
+        let items = sample_items();
+        let manifest = snapshot_export_manifest_json(&items).unwrap();
+        let tex = snapshot_export_report_tex(&items).unwrap();
+
+        let parsed: Value = serde_json::from_str(&manifest).unwrap();
+        let manifest_items = parsed["items"].as_array().unwrap();
+        assert_eq!(manifest_items.len(), items.len());
+        assert_eq!(tex.matches("\\begin{figure}[htbp]").count(), items.len());
+
+        for manifest_item in manifest_items {
+            let id = manifest_item["id"].as_str().unwrap();
+            let path = manifest_item["image"]["path"].as_str().unwrap();
+            assert!(tex.contains(&format!("\\label{{fig:{id}}}")), "{id}");
+            assert!(tex.contains(&format!("\\includegraphics[width=\\linewidth]{{{path}}}")), "{id}");
+        }
     }
 }
 
