@@ -417,6 +417,7 @@ impl PdfCraftApp {
             }
             "export.image" => self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::Image)),
             "export.text" => self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::Text)),
+            "export.crop_review_package" => self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::CropReviewPackage)),
             "a11y.check" => self.start_accessibility_check(),
             "a11y.find_untagged" => self.find_untagged_content(),
             "ocr.recognize" => self.dialog = Some(Dialog::RecognizeText),

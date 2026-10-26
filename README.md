@@ -431,6 +431,10 @@ Snapshot export v1 is now specified in [`docs/snapshot-export-spec.md`](docs/sna
 canonical `manifest.json`, deterministic `report.tex`, `source.pdf`, and PNG evidence crops from one
 shared ordered item list.
 
+Crop review is now a separate persistent workspace from `Edit -> Take a snapshot`: stored crop items
+can be reviewed, saved as a self-contained project folder, and exported as snapshot packages from
+that persisted dataset, while the original snapshot tool remains a copy-oriented transient feature.
+
 PdfCraft is young and moving fast. The aim is a workbench where you can view, organize, annotate, fill, sign and edit PDFs, for professional and everyday workflows.
 
 **Where it stands (October 2026), honestly:** PdfCraft is **alpha**. Most essential offline PDF features exist in some form (57% of the features tracked in [docs/target-app-parity.md](docs/target-app-parity.md), 94% of core essentials). For everyday work (viewing, commenting, filling and signing forms, organizing pages) readiness is about 55%; across all professional workflows, about 49%; for someone who only needs the essentials, about 66%. Every everyday workflow can be completed, but converting and sharing is weak: no office-document-to-PDF, and .docx export that loses layout.

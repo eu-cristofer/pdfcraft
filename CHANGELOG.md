@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Integrated** crop-review export across engine, automation, and UI — snapshot packages can now be emitted from the persisted crop-review dataset with canonical crop ordering and the existing OCR rule, while the original `edit.snapshot` marquee flow remains a separate transient copy/export path.
+
 - **Added** crop-review project-folder persistence across engine and UI — `pdfcraft-engine` now writes and reloads self-contained crop-review projects with UTF-8 `project.json` plus copied `source.pdf`, strict schema/path validation, and regression coverage for non-ASCII metadata, while `pdfcraft-ui-egui` can save and reopen those projects back into the Crops/Metadata workspace with overlay state rebuilt faithfully.
 
 - **Added** a dedicated persistent crop-review rectangle tool in `pdfcraft-ui-egui` — the crop workspace now reuses the existing marquee drag mechanics to create stored crop items with stable ids and PDF-space geometry, selects the new crop immediately into the Crops/Metadata flow, and keeps `edit.snapshot` as a separate copy-and-export path with focused UI non-regression coverage.

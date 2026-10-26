@@ -199,6 +199,33 @@ impl CropReviewItem {
     }
 }
 
+impl Document {
+    pub fn crop_review_snapshot_export_items(&self) -> Result<Vec<SnapshotExportItem>, String> {
+        let mut items = Vec::new();
+        for (order, crop) in self.crop_review.ordered_items(&self.info.pages).into_iter().enumerate() {
+            let page_index = crop
+                .page_number
+                .checked_sub(1)
+                .ok_or_else(|| format!("crop {} has invalid page number {}", crop.id, crop.page_number))?;
+            let page = self
+                .info
+                .pages
+                .get(page_index)
+                .ok_or_else(|| format!("crop {} refers to missing page {}", crop.id, crop.page_number))?;
+            items.push(crop.export_item_input(order, page)?);
+        }
+        normalize_snapshot_export_items(self.info.pages.len(), items)
+    }
+
+    pub fn crop_review_snapshot_export_package_input(&self) -> Result<SnapshotExportPackageInput, String> {
+        Ok(SnapshotExportPackageInput {
+            items: self.crop_review_snapshot_export_items()?,
+            render_source: self.export_source(),
+            source_pdf_bytes: self.bytes.clone(),
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CropReviewStore {
     items: Vec<CropReviewItem>,

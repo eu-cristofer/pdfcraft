@@ -190,6 +190,10 @@ impl Automation {
         &self.session
     }
 
+    pub fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
+    }
+
     /// Save `bytes` that a caller writes on the session's behalf, such as `pdfcraft-cli run`
     /// saving a rendered page. With a root, it is confined like a tool's own output (a relative
     /// path resolves inside it). Written atomically either way (#2166), except to something
@@ -801,6 +805,7 @@ impl Automation {
             }
             "doc_export_images" | "doc_export_text" | "doc_export_all_images" => self.export(name, &a)?,
             "doc_export_snapshot_package" => self.export_snapshot_package(&a)?,
+            "doc_export_crop_review_package" => self.export_crop_review_package(&a)?,
             "doc_header_footer" | "doc_watermark" | "doc_background" | "doc_remove_marks" => self.marks(name, &a)?,
             "doc_unprotect" => {
                 let mut out = self.apply(&a, Edit::RemoveProtection)?;
@@ -1573,6 +1578,30 @@ impl Automation {
             pdfcraft_engine::export::SnapshotExportPackageInput { items, render_source, source_pdf_bytes },
         )
         .map_err(failed)?;
+        Ok(json!({ "path": target.to_string_lossy(), "count": listed.len(), "items": listed }))
+    }
+
+    fn export_crop_review_package(&mut self, a: &Args) -> Result<Value> {
+        let doc = self.doc_to_copy(a)?;
+        let target = self.resolve(a.str("out")?, true)?;
+        let mut input = doc.crop_review_snapshot_export_package_input().map_err(failed)?;
+        if input.items.is_empty() {
+            return Err(failed("the crop review workspace has no stored crop items to export"));
+        }
+        pdfcraft_engine::export::populate_snapshot_export_ocr(&input.render_source, &mut input.items).map_err(failed)?;
+        let listed = input
+            .items
+            .iter()
+            .map(|item| {
+                json!({
+                    "id": item.id,
+                    "page": item.page,
+                    "image_path": item.image_path,
+                    "caption": item.metadata.caption,
+                })
+            })
+            .collect::<Vec<_>>();
+        pdfcraft_engine::export::write_snapshot_export_package(&target, input).map_err(failed)?;
         Ok(json!({ "path": target.to_string_lossy(), "count": listed.len(), "items": listed }))
     }
 
