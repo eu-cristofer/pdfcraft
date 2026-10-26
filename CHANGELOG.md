@@ -17,6 +17,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 - **Aligned** the engine snapshot export model with `003_export-flow` — `crates/engine/src/export.rs` now carries explicit rectangle-driven metadata (`caption` plus optional `note`) and an OCR seam on the shared normalized item path, while keeping the current package contract and deterministic manifest/image/report generation unchanged.
 
+- **Added** a headless rectangle-driven snapshot export tool — `pdfcraft-automation` now writes the standard package from ordered page rectangles plus typed `caption`/`note` metadata, reusing the shared engine package writer and preserving root confinement and deterministic item ordering.
+
 - **Registered** sprint project `docs/changes/003_export-flow/` — phased plan for rectangle-driven evidence export built from user-created selections, typed metadata, OCR of the selected portion, and minimal LaTeX package output with headless and desktop parity.
 - **Added** an engine bridge from selected rectangle comments to snapshot export items — supported-kind filtering, displayed-rectangle mapping, type-label captions, comment-text notes, and canonical comment-target ordering for reuse by UI and automation.
 - **Specified** `docs/selected-rectangle-export.md` — repo-local contract for selected-comment snapshot export covering supported v1 annotation kinds, `caption`/`note` mapping, displayed-rectangle semantics, canonical export ordering, and later UI/automation handoff into the engine.

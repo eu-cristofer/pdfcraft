@@ -800,6 +800,7 @@ impl Automation {
                 summary(self.session.get(new).ok_or_else(|| failed("the document vanished"))?)
             }
             "doc_export_images" | "doc_export_text" | "doc_export_all_images" => self.export(name, &a)?,
+            "doc_export_snapshot_package" => self.export_snapshot_package(&a)?,
             "doc_header_footer" | "doc_watermark" | "doc_background" | "doc_remove_marks" => self.marks(name, &a)?,
             "doc_unprotect" => {
                 let mut out = self.apply(&a, Edit::RemoveProtection)?;
@@ -1518,6 +1519,60 @@ impl Automation {
         } else {
             Ok(json!({ "count": files.len(), "files": files, "lower_dpi": lowered }))
         }
+    }
+
+    fn export_snapshot_package(&mut self, a: &Args) -> Result<Value> {
+        let (page_count, render_source, source_pdf_bytes) = {
+            let doc = self.doc_to_copy(a)?;
+            (doc.info.pages.len(), doc.export_source(), doc.bytes.clone())
+        };
+        let items_value = a.get("items").ok_or_else(|| Args::missing("items"))?;
+        let items = items_value.as_array().ok_or_else(|| Args::wrong("items", "an array of item objects"))?;
+        if items.is_empty() {
+            return Err(ToolError::InvalidArgs("items must list at least one item".into()));
+        }
+
+        let mut inputs = Vec::with_capacity(items.len());
+        for (order, item) in items.iter().enumerate() {
+            let item_args = Args(item);
+            let page = item_args.int("page")?;
+            let page = usize::try_from(page).map_err(|_| ToolError::InvalidArgs("page must be a positive integer".into()))?;
+            let rect = item_args.nums::<4>("rect")?.ok_or_else(|| Args::missing("rect"))?.map(|value| value as f32);
+            let x0 = rect[0].min(rect[2]);
+            let y0 = rect[1].min(rect[3]);
+            let x1 = rect[0].max(rect[2]);
+            let y1 = rect[1].max(rect[3]);
+            inputs.push(pdfcraft_engine::export::SnapshotExportItemInput {
+                order,
+                page,
+                rect: pdfcraft_engine::export::ExportRect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
+                metadata: pdfcraft_engine::export::SnapshotExportMetadata {
+                    caption: item_args.str("caption")?.to_owned(),
+                    note: item_args.opt_str("note")?.map(str::to_owned),
+                },
+                ocr: None,
+            });
+        }
+
+        let target = self.resolve(a.str("out")?, true)?;
+        let items = pdfcraft_engine::export::normalize_snapshot_export_items(page_count, inputs).map_err(ToolError::InvalidArgs)?;
+        let listed = items
+            .iter()
+            .map(|item| {
+                json!({
+                    "id": item.id,
+                    "page": item.page,
+                    "image_path": item.image_path,
+                    "caption": item.metadata.caption,
+                })
+            })
+            .collect::<Vec<_>>();
+        pdfcraft_engine::export::write_snapshot_export_package(
+            &target,
+            pdfcraft_engine::export::SnapshotExportPackageInput { items, render_source, source_pdf_bytes },
+        )
+        .map_err(failed)?;
+        Ok(json!({ "path": target.to_string_lossy(), "count": listed.len(), "items": listed }))
     }
 
     fn doc_create(&mut self, a: &Args) -> Result<Value> {

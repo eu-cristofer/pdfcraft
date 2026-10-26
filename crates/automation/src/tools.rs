@@ -1018,6 +1018,30 @@ pub fn tools() -> Vec<ToolDef> {
                 }),
                 &["doc", "folder"],
             )),
+        t("doc_export_snapshot_package", "Export snapshot evidence package", "Write a rectangle-driven snapshot evidence package to out, using the current document state including unsaved edits. items is an ordered list of evidence items; each item gives page (1-based), rect [x0, y0, x1, y1] in points from the top-left of the displayed page, caption (required plain-text metadata) and optional note (plain-text metadata). The package stays snapshot-only and writes manifest.json, source.pdf, report.tex and cropped PNG evidence through the shared engine export path.")
+            .destructive()
+            .with(schema(
+                json!({
+                    "doc": doc(),
+                    "out": { "type": "string", "description": "Directory to create for the package. Must not already exist." },
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "page": { "type": "integer", "minimum": 1, "description": "1-based page number." },
+                                "rect": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the top-left of the displayed page." },
+                                "caption": { "type": "string", "minLength": 1, "description": "Required plain-text caption metadata." },
+                                "note": { "type": "string", "description": "Optional plain-text note metadata." }
+                            },
+                            "required": ["page", "rect", "caption"],
+                            "additionalProperties": false
+                        }
+                    }
+                }),
+                &["doc", "out", "items"],
+            )),
         t("accessibility_autotag_preview", "Preview automatic tags", "Propose paragraph and heading tags for visible text blocks on one page. Returns page bounds, tentative roles and reasons. Does not change the PDF or claim accessibility compliance. Images, tables, lists, annotations and existing structure require separate review.")
             .ro()
             .with(schema(json!({ "doc": doc(), "page": { "type": "integer", "minimum": 1 } }), &["doc", "page"])),
