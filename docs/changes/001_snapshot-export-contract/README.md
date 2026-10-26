@@ -22,7 +22,7 @@ Each run MUST:
 
 Status: active
 
-- [ ] [Sprint 1 — Discovery and contract decisions](./sprint-1.md)
+- [x] [Sprint 1 — Discovery and contract decisions](./sprint-1.md) — done 2026-10-25
 - [ ] [Sprint 2 — Spec hardening and examples](./sprint-2.md)
 - [ ] [Sprint 3 — Internal export model and ordering](./sprint-3.md)
 - [ ] [Sprint 4 — Manifest and LaTeX generation core](./sprint-4.md)
