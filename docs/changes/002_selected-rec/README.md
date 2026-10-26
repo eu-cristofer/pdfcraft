@@ -22,7 +22,7 @@ Each run MUST:
 
 Status: active
 
-- [ ] [Sprint 1 — Product contract and source mapping](./sprint-1.md)
+- [x] [Sprint 1 — Product contract and source mapping](./sprint-1.md) — done 2026-10-26
 - [ ] [Sprint 2 — Engine bridge from rectangle comments to snapshot export items](./sprint-2.md)
 - [ ] [Sprint 3 — Headless export tool and automation parity](./sprint-3.md)
 - [ ] [Sprint 4 — Desktop export action for selected rectangle comments](./sprint-4.md)
