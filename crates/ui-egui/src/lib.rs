@@ -56,6 +56,7 @@ mod create_multiple_ui;
 mod create_ui;
 mod credits;
 mod crop;
+mod crops_panel;
 mod drag_pointer;
 mod export_ui;
 mod js_ui;
@@ -209,6 +210,7 @@ pub enum RightPanel {
     Comments,
     Bookmarks,
     Pages,
+    Crops,
     Fields,
     Layers,
     Attachments,
@@ -2914,6 +2916,7 @@ impl PdfCraftApp {
                     "comments" => Some(RightPanel::Comments),
                     "bookmarks" => Some(RightPanel::Bookmarks),
                     "pages" => Some(RightPanel::Pages),
+                    "crops" => Some(RightPanel::Crops),
                     "fields" => Some(RightPanel::Fields),
                     "layers" => Some(RightPanel::Layers),
                     "attachments" => Some(RightPanel::Attachments),

@@ -104,7 +104,7 @@ fn snapshot_marquee_opens_package_export_and_writes_engine_package() {
     h.run_steps(6);
 
     if !pdfcraft_engine::ocr::available() {
-        assert!(dir.join("doc_snapshot_package").exists() == false);
+        assert!(!dir.join("doc_snapshot_package").exists());
         return;
     }
 

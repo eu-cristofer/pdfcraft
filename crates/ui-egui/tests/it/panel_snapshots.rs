@@ -163,11 +163,14 @@ fn check(h: &Harness<'static, PdfCraftApp>, name: &str) -> Result<(), String> {
     }
 }
 
+use chrono::TimeZone;
+
 /// Every panel, in the order of the rail.
-const ALL: [RightPanel; 11] = [
+const ALL: [RightPanel; 12] = [
     RightPanel::Comments,
     RightPanel::Bookmarks,
     RightPanel::Pages,
+    RightPanel::Crops,
     RightPanel::Fields,
     RightPanel::Layers,
     RightPanel::Attachments,
@@ -185,6 +188,30 @@ fn open(p: RightPanel) -> (Harness<'static, PdfCraftApp>, &'static str) {
         RightPanel::Comments => "comments",
         RightPanel::Bookmarks => "bookmarks",
         RightPanel::Pages => "pages",
+        RightPanel::Crops => {
+            let mut h = harness("none");
+            let id = h.state().active_ids().expect("active document").1;
+            h.state_mut()
+                .session
+                .crop_review_mut(id)
+                .expect("crop review store")
+                .upsert(pdfcraft_engine::export::CropReviewItem {
+                    id: "snapshot-1".into(),
+                    kind: pdfcraft_engine::export::ExportItemKind::Snapshot,
+                    page_number: 1,
+                    rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 24.0, bottom: 120.0, right: 108.0, top: 180.0 },
+                    caption: "Desk rectangle".into(),
+                    note: Some("Reporter header".into()),
+                    ocr_text: None,
+                    ocr_extracted_at: None,
+                    created_at: chrono::Utc.timestamp_opt(10, 0).single().expect("timestamp"),
+                    updated_at: chrono::Utc.timestamp_opt(10, 0).single().expect("timestamp"),
+                })
+                .expect("valid crop");
+            h.state_mut().set_option("panel", "crops").expect("crops panel opens");
+            h.run_steps(3);
+            return (h, "crops");
+        }
         RightPanel::Fields => "fields",
         RightPanel::Layers => "layers",
         RightPanel::Attachments => "attachments",
