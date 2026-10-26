@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Specified** `docs/rectangle-driven-export.md` and marked `docs/selected-rectangle-export.md` superseded for `003_export-flow` where the notes conflict — rectangle-driven evidence export now uses user-created rectangles in the shared displayed-page coordinate contract, explicit typed `caption`/`note` metadata, OCR derived from the selected portion into the minimal figure-oriented `report.tex`, and one planned engine path shared by headless and desktop entrypoints.
+
 - **Registered** sprint project `docs/changes/003_export-flow/` — phased plan for rectangle-driven evidence export built from user-created selections, typed metadata, OCR of the selected portion, and minimal LaTeX package output with headless and desktop parity.
 - **Added** an engine bridge from selected rectangle comments to snapshot export items — supported-kind filtering, displayed-rectangle mapping, type-label captions, comment-text notes, and canonical comment-target ordering for reuse by UI and automation.
 - **Specified** `docs/selected-rectangle-export.md` — repo-local contract for selected-comment snapshot export covering supported v1 annotation kinds, `caption`/`note` mapping, displayed-rectangle semantics, canonical export ordering, and later UI/automation handoff into the engine.
