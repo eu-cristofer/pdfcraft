@@ -29,6 +29,19 @@ This note does not define:
 - arbitrary trusted-LaTeX fields
 - a requirement that the export rectangle be persisted as a PDF annotation
 - final command names or UI copy for later sprints
+- the persistent crop-review workspace defined in `docs/crop-review-workspace.md`
+
+## Relationship to the crop-review workspace
+
+`docs/crop-review-workspace.md` defines the separate persistent crop-review product surface.
+
+That workspace is intentionally not the same thing as the original snapshot tool covered here:
+
+- the original snapshot tool remains a transient copy-oriented action
+- the crop-review workspace owns durable crop items, right-side review panels, and project-folder persistence
+- both flows may later reuse the same lower-layer snapshot package writer and OCR rules
+
+This note remains authoritative only for the rectangle-driven snapshot-export flow and the engine/package mapping that flow uses.
 
 ## Relationship to the package contract
 

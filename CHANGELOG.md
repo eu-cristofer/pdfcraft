@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Specified** `docs/crop-review-workspace.md` and cross-referenced `docs/rectangle-driven-export.md` — the repo-local contract now locks the persistent crop-review workspace as separate from the original snapshot tool, with dedicated `Crops` and `Metadata` right-side panels, canonical crop ordering, PDF-space geometry, a self-contained project folder using UTF-8 `project.json` plus copied `source.pdf`, and later export driven from stored crop items.
+
 - **Registered** sprint project `docs/changes/004_crop-review-workspace/` — phased plan for a persistent crop-review workspace with dedicated Crops and Metadata right-side panels, synchronized overlay selection, project-folder persistence, and export driven from stored crop items instead of the original snapshot tool.
 
 - **Specified** `docs/rectangle-driven-export.md` and marked `docs/selected-rectangle-export.md` superseded for `003_export-flow` where the notes conflict — rectangle-driven evidence export now uses user-created rectangles in the shared displayed-page coordinate contract, explicit typed `caption`/`note` metadata, OCR derived from the selected portion into the minimal figure-oriented `report.tex`, and one planned engine path shared by headless and desktop entrypoints.
