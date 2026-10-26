@@ -13,6 +13,13 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Hardened** snapshot export v1 with repeatability and guardrail coverage — deterministic package reruns, explicit rejection of non-`snapshot` evidence kinds in v1, and final contributor-facing docs for extension seams.
+- **Added** end-to-end snapshot export package writing in `crates/engine/src/export.rs` — emits `manifest.json`, `source.pdf`, `report.tex`, and cropped PNG evidence via staged directory publication with validation and failure cleanup.
+- **Added** manifest and LaTeX generation core in `crates/engine/src/export.rs` — deterministic `manifest.json` and `report.tex` output from the shared normalized snapshot item list, with golden coverage for alignment and escaping.
+- **Added** a normalized snapshot export item model in `crates/engine/src/export.rs` — deterministic ordering, `item_N` ID assignment, canonical `evidence/<id>.png` paths, and validation for pages, rectangles, and package-relative paths.
+- **Specified** `docs/snapshot-export-spec.md` — v1 snapshot export contract with canonical `manifest.json`, deterministic IDs/paths, explicit coordinate and `source.pdf` semantics, validation rules, and worked examples.
+- **Documented** snapshot-export discovery decisions in `docs/snapshot-export-discovery.md` — current coordinate/ordering/text-trust/source-PDF/render semantics that later sprints will implement against.
+- **Registered** sprint project `docs/changes/001_snapshot-export-contract/` — phased plan for a stable, extensible snapshot export contract with canonical manifest, deterministic LaTeX output, and package validation.
 - **Synced** with upstream `storytold/pdfcraft` `main` (merge commit `77509e78`), bringing this
   fork from upstream `0.8.0` to `0.14.0`.
 - **Added** `docs/techind/update-fork-and-release.md` — runbook for syncing this fork with

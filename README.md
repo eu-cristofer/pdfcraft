@@ -424,6 +424,13 @@ Logs, environment variables and other development notes are in [docs/development
 
 ## What's next
 
+Active implementation plans live under `docs/changes/`; the current queued project is
+[`001_snapshot-export-contract`](docs/changes/001_snapshot-export-contract/README.md).
+
+Snapshot export v1 is now specified in [`docs/snapshot-export-spec.md`](docs/snapshot-export-spec.md):
+canonical `manifest.json`, deterministic `report.tex`, `source.pdf`, and PNG evidence crops from one
+shared ordered item list.
+
 PdfCraft is young and moving fast. The aim is a workbench where you can view, organize, annotate, fill, sign and edit PDFs, for professional and everyday workflows.
 
 **Where it stands (October 2026), honestly:** PdfCraft is **alpha**. Most essential offline PDF features exist in some form (57% of the features tracked in [docs/target-app-parity.md](docs/target-app-parity.md), 94% of core essentials). For everyday work (viewing, commenting, filling and signing forms, organizing pages) readiness is about 55%; across all professional workflows, about 49%; for someone who only needs the essentials, about 66%. Every everyday workflow can be completed, but converting and sharing is weak: no office-document-to-PDF, and .docx export that loses layout.
