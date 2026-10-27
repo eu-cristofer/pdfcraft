@@ -107,6 +107,27 @@ fn click(h: &mut Harness<'static, PdfCraftApp>, p: Pos2) {
     h.run_steps(3);
 }
 
+fn drag(h: &mut Harness<'static, PdfCraftApp>, from: Pos2, to: Pos2) {
+    h.hover_at(from);
+    h.run_steps(1);
+    h.drag_at(from);
+    h.run_steps(1);
+    for k in 1..=4 {
+        h.hover_at(from + (to - from) * (k as f32 / 4.0));
+        h.run_steps(1);
+    }
+    h.drop_at(to);
+    h.run_steps(4);
+}
+
+fn crop_corner(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: CropPdfRect, right: bool, top: bool) -> Pos2 {
+    let page = h.state().views[0].page_screen_rect(page_number - 1).expect("page on screen");
+    let x = if right { rect.right } else { rect.left } / 300.0 * page.width();
+    let y_pdf = if top { rect.top } else { rect.bottom };
+    let y = (400.0 - y_pdf) / 400.0 * page.height();
+    pos2(page.left() + x, page.top() + y)
+}
+
 #[test]
 fn crops_panel_is_a_right_side_panel_and_lists_rows_in_canonical_order() {
     let h = harness(|app| {
@@ -295,6 +316,65 @@ fn deleting_a_selected_crop_removes_it_and_selects_the_next_crop() {
     assert!(doc.crop_review().get("crop-0001").is_none());
     assert_eq!(h.state().views[0].selected_crop(), Some("crop-0002"));
     assert_eq!(field(&h, "Caption").value().as_deref(), Some("Second"));
+}
+
+#[test]
+fn delete_key_removes_the_selected_crop() {
+    let mut h = harness(|app| {
+        seed(app, [item("crop-0001", 1, CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 }, "First", 10)]);
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("crop-0001");
+    });
+
+    h.key_press(egui::Key::Delete);
+    h.run_steps(3);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    assert!(doc.crop_review().items().is_empty());
+    assert_eq!(h.state().views[0].selected_crop(), None);
+}
+
+#[test]
+fn dragging_a_selected_crop_moves_its_rectangle() {
+    let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
+    let mut h = harness(move |app| {
+        seed(app, [item("move", 1, rect, "Move me", 10)]);
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("move");
+    });
+
+    let from = crop_center(&h, 1, rect);
+    let to = from + egui::vec2(24.0, 20.0);
+    drag(&mut h, from, to);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    let moved = doc.crop_review().get("move").expect("moved crop");
+    assert!(moved.rect_pdf.left > rect.left, "left should move right");
+    assert!(moved.rect_pdf.top < rect.top, "top should move down on screen drag");
+    assert_eq!(h.state().views[0].selected_crop(), Some("move"));
+}
+
+#[test]
+fn dragging_a_corner_handle_resizes_the_selected_crop() {
+    let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
+    let mut h = harness(move |app| {
+        seed(app, [item("resize", 1, rect, "Resize me", 10)]);
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("resize");
+    });
+
+    let from = crop_corner(&h, 1, rect, true, true);
+    let to = from + egui::vec2(28.0, -24.0);
+    drag(&mut h, from, to);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    let resized = doc.crop_review().get("resize").expect("resized crop");
+    assert!(resized.rect_pdf.right > rect.right, "right edge should expand");
+    assert!(resized.rect_pdf.top > rect.top, "top edge should expand upward");
+    assert_eq!(h.state().views[0].selected_crop(), Some("resize"));
 }
 
 #[test]

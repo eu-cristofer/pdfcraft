@@ -1,6 +1,6 @@
 //! Crop review UI: the Crops panel plus the stored-crop overlay on the page canvas.
 
-use egui::{Color32, CornerRadius, Pos2, Sense, Stroke};
+use egui::{Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2};
 use pdfcraft_engine::export::CropPdfRect;
 use pdfcraft_engine::{
     Document,
@@ -11,10 +11,15 @@ use crate::icons;
 use crate::theme::{self, Tokens};
 use crate::{
     canvas::{DocView, PageXform},
+    comments,
     page_pointer::PagePointer,
     panels::Nav,
     widgets,
 };
+
+const HANDLE_SIZE: f32 = 10.0;
+const HANDLE_HIT_RADIUS: f32 = 8.0;
+const MIN_SIDE: f32 = 6.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PanelEdit {
@@ -60,22 +65,70 @@ pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut Doc
     edit
 }
 
-pub(crate) fn page_input(resp: &egui::Response, doc: &Document, xf: &PageXform, ptr: &PagePointer, page: usize, view: &mut DocView) -> bool {
+pub(crate) fn page_input(
+    resp: &egui::Response,
+    doc: &Document,
+    xf: &PageXform,
+    ptr: &PagePointer,
+    page: usize,
+    view: &mut DocView,
+    interactive: bool,
+) -> bool {
     if view.crop_review.creating {
         return crate::zoom_snap::marquee_input(resp, xf, ptr, page, &mut view.marquee, &mut view.marquee_done);
     }
+    if !interactive {
+        return false;
+    }
+
+    if let Some(gesture) = view.crop_review.gesture
+        && gesture.page == page
+    {
+        if resp.drag_stopped() || !ptr.primary_down {
+            if let Some(updated) = commit_gesture(doc, xf, ptr.pos.unwrap_or(gesture.start), gesture) {
+                let selected = updated.id.clone();
+                view.pending_action = Some(crate::canvas::ViewAction::UpsertCropReviewItem(updated));
+                view.crop_review.select(&selected);
+            }
+            view.crop_review.gesture = None;
+        }
+        return true;
+    }
 
     let Some(pointer) = ptr.pos.filter(|p| xf.rect.contains(*p)) else { return false };
-    let hit = page_items(doc, page).filter(|item| xf.user_rect(&doc.info, page, user_rect(item)).expand(4.0).contains(pointer)).last();
+    let items = page_items(doc, page).map(|item| (item, xf.user_rect(&doc.info, page, user_rect(item)))).collect::<Vec<_>>();
+    let handle_hit = items.iter().filter_map(|(item, rect)| handle_hit(*rect, pointer).map(|kind| (*item, *rect, kind))).next_back();
+    let rect_hit = items.iter().rfind(|(_, rect)| rect.expand(4.0).contains(pointer)).copied();
+
+    if resp.drag_started()
+        && let Some(start) = ptr.origin.filter(|p| xf.rect.contains(*p))
+    {
+        if let Some((item, rect, kind)) = handle_hit {
+            view.crop_review.select(item.id.as_str());
+            view.crop_review.gesture = Some(crate::crop_review_ui::CropGesture { page, kind, id: item_id(item), from_rect: rect, start });
+            return true;
+        }
+        if let Some((item, rect)) = rect_hit {
+            view.crop_review.select(item.id.as_str());
+            view.crop_review.gesture = Some(crate::crop_review_ui::CropGesture {
+                page,
+                kind: crate::crop_review_ui::CropGestureKind::Move,
+                id: item_id(item),
+                from_rect: rect,
+                start,
+            });
+            return true;
+        }
+    }
 
     if resp.clicked()
-        && let Some(item) = hit
+        && let Some((item, _)) = rect_hit
     {
         view.crop_review.select(item.id.as_str());
         return true;
     }
 
-    hit.is_some() && resp.is_pointer_button_down_on()
+    (handle_hit.is_some() || rect_hit.is_some()) && resp.is_pointer_button_down_on()
 }
 
 pub(crate) fn paint_page(
@@ -88,8 +141,9 @@ pub(crate) fn paint_page(
     pointer: Option<Pos2>,
 ) {
     for item in page_items(doc, page) {
-        let rect = xf.user_rect(&doc.info, page, user_rect(item));
+        let base = xf.user_rect(&doc.info, page, user_rect(item));
         let selected = view.crop_review.selected.as_deref() == Some(item.id.as_str());
+        let rect = preview_rect(view, item, base, pointer);
         let hovered = pointer.is_some_and(|p| rect.expand(4.0).contains(p));
         let fill = if selected {
             Color32::from_rgba_unmultiplied(0x14, 0x73, 0xE6, 28)
@@ -107,11 +161,29 @@ pub(crate) fn paint_page(
         };
         painter.rect_filled(rect, CornerRadius::same(4), fill);
         painter.rect_stroke(rect, CornerRadius::same(4), stroke, egui::StrokeKind::Middle);
+        if selected {
+            for handle in handles(rect) {
+                painter.rect_filled(handle, CornerRadius::same(2), Color32::WHITE);
+                painter.rect_stroke(handle, CornerRadius::same(2), Stroke::new(1.0, Color32::from_rgb(0x14, 0x73, 0xE6)), egui::StrokeKind::Middle);
+            }
+        }
     }
 
     if view.crop_review.creating {
         crate::zoom_snap::paint_marquee(_ui, xf, pointer, page, view.marquee);
     }
+}
+
+pub(crate) fn delete_key(ctx: &egui::Context, doc: &Document, view: &mut DocView) -> bool {
+    if ctx.egui_wants_keyboard_input() || view.crop_review.creating || view.crop_review.gesture.is_some() {
+        return false;
+    }
+    let Some(id) = view.crop_review.selected.clone() else { return false };
+    if !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)) {
+        return false;
+    }
+    delete_selected_crop(doc, view, &id);
+    true
 }
 
 fn row(ui: &mut egui::Ui, t: &Tokens, item: &CropReviewItem, selected: bool) -> bool {
@@ -212,6 +284,91 @@ fn detail(ui: &mut egui::Ui, t: &Tokens, view: &mut DocView, item: &CropReviewIt
 
 fn page_items<'a>(doc: &'a Document, page: usize) -> impl Iterator<Item = &'a CropReviewItem> + 'a {
     doc.crop_review().items().iter().filter(move |item| item.page_number == page + 1)
+}
+
+fn preview_rect(view: &DocView, item: &CropReviewItem, base: Rect, pointer: Option<Pos2>) -> Rect {
+    if let Some(gesture) = view.crop_review.gesture
+        && gesture.id == item_id(item)
+        && let Some(pointer) = pointer
+    {
+        return dragged_rect(gesture.from_rect, gesture.kind, pointer - gesture.start);
+    }
+    base
+}
+
+fn item_id(item: &CropReviewItem) -> [u64; 2] {
+    hash_id(item.id.as_bytes())
+}
+
+fn hash_id(bytes: &[u8]) -> [u64; 2] {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(bytes);
+    let first = hasher.finish();
+    let mut second = std::collections::hash_map::DefaultHasher::new();
+    second.write_u64(first.rotate_left(13));
+    second.write(bytes);
+    [first, second.finish()]
+}
+
+fn handles(r: Rect) -> [Rect; 4] {
+    [
+        Rect::from_center_size(r.left_top(), Vec2::splat(HANDLE_SIZE)),
+        Rect::from_center_size(r.right_top(), Vec2::splat(HANDLE_SIZE)),
+        Rect::from_center_size(r.left_bottom(), Vec2::splat(HANDLE_SIZE)),
+        Rect::from_center_size(r.right_bottom(), Vec2::splat(HANDLE_SIZE)),
+    ]
+}
+
+fn handle_hit(rect: Rect, pointer: Pos2) -> Option<crate::crop_review_ui::CropGestureKind> {
+    [
+        (rect.left_top(), crate::crop_review_ui::CropGestureKind::Corner { left: true, top: true }),
+        (rect.right_top(), crate::crop_review_ui::CropGestureKind::Corner { left: false, top: true }),
+        (rect.left_bottom(), crate::crop_review_ui::CropGestureKind::Corner { left: true, top: false }),
+        (rect.right_bottom(), crate::crop_review_ui::CropGestureKind::Corner { left: false, top: false }),
+    ]
+    .into_iter()
+    .find_map(|(corner, kind)| (corner.distance(pointer) <= HANDLE_HIT_RADIUS).then_some(kind))
+}
+
+fn dragged_rect(from: Rect, kind: crate::crop_review_ui::CropGestureKind, delta: Vec2) -> Rect {
+    match kind {
+        crate::crop_review_ui::CropGestureKind::Move => from.translate(delta),
+        crate::crop_review_ui::CropGestureKind::Corner { left, top } => {
+            let handle = (if left { -1 } else { 1 }, if top { -1 } else { 1 });
+            let resized = comments::resized(from, handle, delta, None);
+            if resized.width() >= MIN_SIDE && resized.height() >= MIN_SIDE { resized } else { from }
+        }
+    }
+}
+
+fn commit_gesture(doc: &Document, xf: &PageXform, pointer: Pos2, gesture: crate::crop_review_ui::CropGesture) -> Option<CropReviewItem> {
+    let id = find_item_id(doc, gesture.id)?;
+    let item = doc.crop_review().get(id)?.clone();
+    let rect = dragged_rect(gesture.from_rect, gesture.kind, pointer - gesture.start).intersect(xf.rect);
+    if rect.width() < MIN_SIDE || rect.height() < MIN_SIDE {
+        return None;
+    }
+    let user = screen_rect_to_user(xf, &doc.info, gesture.page, rect);
+    let mut updated = item;
+    updated.rect_pdf = CropPdfRect::from_user_rect(user).ok()?;
+    updated.updated_at = chrono::Utc::now();
+    Some(updated)
+}
+
+fn screen_rect_to_user(xf: &PageXform, info: &pdfcraft_render::DocInfo, page: usize, rect: Rect) -> [f32; 4] {
+    let (a, b) = (xf.screen_to_view(rect.min), xf.screen_to_view(rect.max));
+    info.pages[page].view_rect_to_user([a.0, a.1, b.0, b.1])
+}
+
+fn find_item_id(doc: &Document, id: [u64; 2]) -> Option<&str> {
+    doc.crop_review().items().iter().find(|item| item_id(item) == id).map(|item| item.id.as_str())
+}
+
+fn delete_selected_crop(doc: &Document, view: &mut DocView, id: &str) {
+    if doc.crop_review().get(id).is_some() {
+        view.pending_action = Some(crate::canvas::ViewAction::DeleteCropReviewItem(id.to_owned()));
+    }
 }
 
 pub(crate) fn primary_label(item: &CropReviewItem) -> String {

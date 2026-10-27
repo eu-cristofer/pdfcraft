@@ -1,14 +1,31 @@
 //! Per-document crop-review UI state.
 
+use egui::{Pos2, Rect};
 use pdfcraft_engine::Document;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct CropReviewView {
     pub selected: Option<String>,
     pub metadata_for: Option<String>,
     pub metadata_caption: String,
     pub metadata_note: String,
     pub creating: bool,
+    pub gesture: Option<CropGesture>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CropGesture {
+    pub page: usize,
+    pub kind: CropGestureKind,
+    pub id: [u64; 2],
+    pub from_rect: Rect,
+    pub start: Pos2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CropGestureKind {
+    Move,
+    Corner { left: bool, top: bool },
 }
 
 impl CropReviewView {
@@ -35,6 +52,7 @@ impl CropReviewView {
         self.metadata_caption.clear();
         self.metadata_note.clear();
         self.creating = false;
+        self.gesture = None;
     }
 
     pub(crate) fn selected_item<'a>(&self, doc: &'a Document) -> Option<&'a pdfcraft_engine::export::CropReviewItem> {

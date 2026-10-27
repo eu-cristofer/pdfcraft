@@ -721,7 +721,7 @@ fn thumbnail_scale(width: f32, height: f32, density: f32) -> f32 {
 }
 
 /// Organize-toolbar actions that need the app (file pickers, new tabs, dialogs).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ViewAction {
     InsertFromFile,
     /// Insert files at a gap of the page grid (0 = before the first page).
@@ -752,6 +752,8 @@ pub enum ViewAction {
     CameraLevel,
     /// After Enhance page: leave the tool for this command (Crop pages, Organize pages).
     CameraNext(&'static str),
+    UpsertCropReviewItem(pdfcraft_engine::export::CropReviewItem),
+    DeleteCropReviewItem(String),
 }
 
 impl DocView {
@@ -811,6 +813,7 @@ impl DocView {
         self.sign.drag = None;
         self.redact_drag = None;
         self.crop_drag = None;
+        self.crop_review.gesture = None;
         self.block_drag = None;
         self.org_drag = None;
         self.panel_drag = None;
@@ -3801,7 +3804,10 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             {
                 view.links.context = Some((i, l.index));
             }
-            let on_crop_review = crate::crops_panel::page_input(&resp, doc, &xf, &ptr, i, view);
+            let on_crop_review = crate::crops_panel::page_input(&resp, doc, &xf, &ptr, i, view, tool == QuickTool::Select);
+            if tool == QuickTool::Select {
+                let _ = crate::crops_panel::delete_key(ui.ctx(), doc, view);
+            }
             let consumed = on_objects
                 || on_edit_text
                 || on_link

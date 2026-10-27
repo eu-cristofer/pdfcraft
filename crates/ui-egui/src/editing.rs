@@ -294,6 +294,39 @@ impl PdfCraftApp {
                 self.leave_camera(i);
                 self.execute(command);
             }
+            Some(crate::canvas::ViewAction::UpsertCropReviewItem(item)) => {
+                if let Some(view) = self.views.get(i)
+                    && let Ok(store) = self.session.crop_review_mut(view.id)
+                {
+                    let _ = store.upsert(item);
+                }
+            }
+            Some(crate::canvas::ViewAction::DeleteCropReviewItem(id)) => {
+                if let Some(view) = self.views.get(i) {
+                    let ordered_ids = self
+                        .session
+                        .get(view.id)
+                        .map(|doc| doc.ordered_crop_review_items().iter().map(|item| item.id.clone()).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    if let Ok(store) = self.session.crop_review_mut(view.id) {
+                        let _ = store.remove(&id);
+                    }
+                    let next = ordered_ids
+                        .iter()
+                        .position(|existing| existing == &id)
+                        .and_then(|index| ordered_ids.get(index + 1).or_else(|| index.checked_sub(1).and_then(|prev| ordered_ids.get(prev))))
+                        .cloned();
+                    if let Some(view) = self.views.get_mut(i) {
+                        match next {
+                            Some(next_id) => view.crop_review.select(&next_id),
+                            None => view.crop_review.clear(),
+                        }
+                        if let Some(doc) = self.session.get(view.id) {
+                            view.crop_review.ensure_selected(doc);
+                        }
+                    }
+                }
+            }
             None => {}
         }
         applied
