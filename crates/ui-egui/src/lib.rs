@@ -65,7 +65,6 @@ mod js_ui;
 mod macos_association;
 mod marks_ui;
 mod measure_ui;
-mod metadata_panel;
 mod ocr_ui;
 mod optimize_ui;
 mod search_ui;
@@ -213,6 +212,7 @@ pub enum RightPanel {
     Bookmarks,
     Pages,
     Crops,
+    /// Legacy persisted value: restored as `Crops`.
     Metadata,
     Fields,
     Layers,
@@ -2924,7 +2924,7 @@ impl PdfCraftApp {
                     "bookmarks" => Some(RightPanel::Bookmarks),
                     "pages" => Some(RightPanel::Pages),
                     "crops" => Some(RightPanel::Crops),
-                    "metadata" => Some(RightPanel::Metadata),
+                    "metadata" => Some(RightPanel::Crops),
                     "fields" => Some(RightPanel::Fields),
                     "layers" => Some(RightPanel::Layers),
                     "attachments" => Some(RightPanel::Attachments),

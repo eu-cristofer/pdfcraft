@@ -1,6 +1,7 @@
 //! Crop review UI: the Crops panel plus the stored-crop overlay on the page canvas.
 
 use egui::{Color32, CornerRadius, Pos2, Sense, Stroke};
+use pdfcraft_engine::export::CropPdfRect;
 use pdfcraft_engine::{
     Document,
     export::{CropReviewItem, ExportItemKind},
@@ -12,9 +13,17 @@ use crate::{
     canvas::{DocView, PageXform},
     page_pointer::PagePointer,
     panels::Nav,
+    widgets,
 };
 
-pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut DocView, nav: &mut Option<Nav>) {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PanelEdit {
+    UpdateMetadata { id: String, caption: String, note: Option<String> },
+    Delete { id: String },
+}
+
+pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut DocView, nav: &mut Option<Nav>) -> Option<PanelEdit> {
+    let mut edit = None;
     ui.horizontal(|ui| {
         let label = if view.crop_review.creating { tl!("Stop drawing") } else { tl!("Draw crop") };
         if ui.add(egui::Button::new(label)).clicked() {
@@ -26,7 +35,7 @@ pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut Doc
     let items = doc.ordered_crop_review_items();
     if items.is_empty() {
         crate::panels::empty(ui, t, "crop", "This document has no crops.");
-        return;
+        return None;
     }
 
     view.crop_review.ensure_selected(doc);
@@ -39,6 +48,16 @@ pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut Doc
         }
         ui.add_space(2.0);
     }
+
+    if let Some(item) = view.crop_review.selected_item(doc) {
+        if view.crop_review.metadata_for.as_deref() != Some(item.id.as_str()) {
+            view.crop_review.load_metadata(item);
+        }
+        ui.add_space(10.0);
+        edit = detail(ui, t, view, item);
+    }
+
+    edit
 }
 
 pub(crate) fn page_input(resp: &egui::Response, doc: &Document, xf: &PageXform, ptr: &PagePointer, page: usize, view: &mut DocView) -> bool {
@@ -120,6 +139,77 @@ fn row(ui: &mut egui::Ui, t: &Tokens, item: &CropReviewItem, selected: bool) -> 
     theme::hand(resp).clicked()
 }
 
+fn detail(ui: &mut egui::Ui, t: &Tokens, view: &mut DocView, item: &CropReviewItem) -> Option<PanelEdit> {
+    let mut edit = None;
+    let mut open_menu = false;
+    let mut more_rect = None;
+    ui.group(|ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing.y = 8.0;
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(primary_label(item)).font(theme::semibold(15.5)));
+                ui.label(egui::RichText::new(secondary_label(item)).font(theme::regular(11.0)).color(t.text_faint));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                let more = icons::button(ui, "ellipsis", 22.0, false, tl!("More"));
+                open_menu = more.clicked();
+                more_rect = Some(more.rect);
+            });
+        });
+
+        let caption_label = ui.label(tl!("Caption"));
+        let caption = ui
+            .add(widgets::line(&mut view.crop_review.metadata_caption).desired_width(f32::INFINITY))
+            .labelled_by(caption_label.id)
+            .accessible_name(tl!("Caption"));
+        if caption.changed() {
+            edit = Some(pending_metadata_edit(view, item.id.as_str()));
+        }
+
+        let note_label = ui.label(tl!("Note"));
+        let note = ui
+            .add(egui::TextEdit::multiline(&mut view.crop_review.metadata_note).desired_width(f32::INFINITY).desired_rows(4))
+            .labelled_by(note_label.id)
+            .accessible_name(tl!("Note"));
+        if note.changed() {
+            edit = Some(pending_metadata_edit(view, item.id.as_str()));
+        }
+
+        let rect = item.rect_pdf;
+        ui.label(
+            egui::RichText::new(crate::i18n::fmt(tl!("Kind: {kind}"), &[("kind", kind_label(item.kind))]))
+                .font(theme::regular(11.0))
+                .color(t.text_faint),
+        );
+        ui.label(
+            egui::RichText::new(crate::i18n::fmt(tl!("Page: {page}"), &[("page", &item.page_number.to_string())]))
+                .font(theme::regular(11.0))
+                .color(t.text_faint),
+        );
+        ui.label(egui::RichText::new(rect_label(rect)).font(theme::regular(11.0)).color(t.text_faint));
+    });
+
+    let menu_id = ui.scope_id().with(("crop-menu", item.id.as_str()));
+    if open_menu {
+        egui::Popup::open_id(ui.ctx(), menu_id);
+    }
+    let anchor = more_rect.map_or(egui::PopupAnchor::PointerFixed, egui::PopupAnchor::ParentRect);
+    egui::Popup::new(menu_id, ui.ctx().clone(), anchor, ui.layer_id())
+        .open_memory(None)
+        .kind(egui::PopupKind::Menu)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .show(|ui| {
+            ui.set_min_width(160.0);
+            if ui.button(tl!("Delete")).clicked() {
+                edit = Some(PanelEdit::Delete { id: item.id.clone() });
+                ui.close();
+            }
+        });
+
+    edit
+}
+
 fn page_items<'a>(doc: &'a Document, page: usize) -> impl Iterator<Item = &'a CropReviewItem> + 'a {
     doc.crop_review().items().iter().filter(move |item| item.page_number == page + 1)
 }
@@ -133,10 +223,34 @@ pub(crate) fn secondary_label(item: &CropReviewItem) -> String {
     format!("{} · Page {}", kind_label(item.kind), item.page_number)
 }
 
+fn pending_metadata_edit(view: &DocView, id: &str) -> PanelEdit {
+    PanelEdit::UpdateMetadata {
+        id: id.to_owned(),
+        caption: view.crop_review.metadata_caption.clone(),
+        note: Some(view.crop_review.metadata_note.clone()).filter(|text| !text.trim().is_empty()),
+    }
+}
+
 fn kind_label(kind: ExportItemKind) -> &'static str {
     match kind {
         ExportItemKind::Snapshot => "Snapshot",
     }
+}
+
+fn rect_label(rect: CropPdfRect) -> String {
+    crate::i18n::fmt(
+        tl!("Area: {left}, {bottom}, {right}, {top}"),
+        &[
+            ("left", &format_coord(rect.left)),
+            ("bottom", &format_coord(rect.bottom)),
+            ("right", &format_coord(rect.right)),
+            ("top", &format_coord(rect.top)),
+        ],
+    )
+}
+
+fn format_coord(value: f32) -> String {
+    format!("{value:.1}")
 }
 
 fn user_rect(item: &CropReviewItem) -> [f32; 4] {

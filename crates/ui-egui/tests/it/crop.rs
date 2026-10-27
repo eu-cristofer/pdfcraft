@@ -186,8 +186,6 @@ fn selecting_from_the_crops_panel_selects_the_overlay_item_and_updates_metadata(
     assert_eq!(h.state().views[0].selected_crop(), Some("captioned"));
     assert!(h.state().views[0].flash.is_some(), "selecting from the list flashes the overlay rectangle");
 
-    h.state_mut().set_option("panel", "metadata").unwrap();
-    h.run_steps(3);
     assert_eq!(field(&h, "Caption").value().as_deref(), Some("Named crop"));
     assert_eq!(field(&h, "Note").value().as_deref(), Some("First note"));
 }
@@ -213,8 +211,6 @@ fn selecting_from_the_overlay_selects_the_crops_row_and_updates_metadata() {
     assert_eq!(h.state().views[0].selected_crop(), Some("overlay-hit"));
     crop_row(&h, "Overlay crop Snapshot · Page 1");
 
-    h.state_mut().set_option("panel", "metadata").unwrap();
-    h.run_steps(3);
     assert_eq!(field(&h, "Caption").value().as_deref(), Some("Overlay crop"));
     assert_eq!(field(&h, "Note").value().as_deref(), Some("Overlay note"));
 }
@@ -231,7 +227,7 @@ fn metadata_edits_update_the_selected_crop_without_oscillating_selection_state()
             crop.note = Some("Old note".into());
             store.upsert(crop).expect("updated crop");
         }
-        app.set_option("panel", "metadata").unwrap();
+        app.set_option("panel", "crops").unwrap();
         app.views[0].select_crop("editable");
     });
 
@@ -272,9 +268,33 @@ fn creating_a_crop_rectangle_appears_in_overlay_crops_and_metadata() {
     assert_eq!(h.state().views[0].selected_crop(), Some(created.id.as_str()));
 
     crop_row(&h, "Page 1 Snapshot · Page 1");
-    h.state_mut().set_option("panel", "metadata").unwrap();
-    h.run_steps(3);
     assert_eq!(field(&h, "Caption").value().as_deref(), Some(""));
+}
+
+#[test]
+fn deleting_a_selected_crop_removes_it_and_selects_the_next_crop() {
+    let mut h = harness(|app| {
+        seed(
+            app,
+            [
+                item("crop-0001", 1, CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 }, "First", 10),
+                item("crop-0002", 2, CropPdfRect { left: 30.0, bottom: 240.0, right: 90.0, top: 320.0 }, "Second", 20),
+            ],
+        );
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("crop-0001");
+    });
+
+    h.get_by_label("More").click();
+    h.run_steps(2);
+    h.get_by_label("Delete").click();
+    h.run_steps(3);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    assert!(doc.crop_review().get("crop-0001").is_none());
+    assert_eq!(h.state().views[0].selected_crop(), Some("crop-0002"));
+    assert_eq!(field(&h, "Caption").value().as_deref(), Some("Second"));
 }
 
 #[test]
@@ -343,7 +363,7 @@ fn crop_review_project_save_and_reopen_restores_workspace_state() {
     crop_row(&h, "第二 Snapshot · Page 1");
     crop_row(&h, "Résumé Snapshot · Page 2");
 
-    h.state_mut().set_option("panel", "metadata").unwrap();
+    h.state_mut().set_option("panel", "crops").unwrap();
     h.state_mut().views[0].select_crop("crop-0001");
     h.run_steps(3);
     assert_eq!(field(&h, "Caption").value().as_deref(), Some("第二"));
