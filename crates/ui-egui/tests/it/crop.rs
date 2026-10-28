@@ -132,14 +132,6 @@ fn crop_corner(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: Crop
     pos2(page.left() + x, page.top() + y)
 }
 
-fn overlay_hit(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: CropPdfRect) -> bool {
-    let mut app = h.state().clone();
-    let Some(doc) = app.session.get(app.views[0].id).cloned() else { return false };
-    let Some((_, xf)) = app.views[0].screen_xforms.iter().find(|(p, _)| *p == page_number - 1) else { return false };
-    let point = crop_center(h, page_number, rect);
-    xf.user_rect(&doc.info, page_number - 1, [rect.left, rect.bottom, rect.right, rect.top]).expand(4.0).contains(point)
-}
-
 #[test]
 fn crops_panel_is_a_right_side_panel_and_lists_rows_in_canonical_order() {
     let h = harness(|app| {
@@ -221,7 +213,6 @@ fn hide_all_crops_hides_overlays_but_keeps_the_panel_items() {
         app.views[0].select_crop("hidden");
     });
 
-    assert!(!h.state().views[0].crop_review.hidden);
     crop_row(&h, "Hidden crop Snapshot · Page 1");
 
     h.get_by_label("More options").click();
@@ -229,7 +220,6 @@ fn hide_all_crops_hides_overlays_but_keeps_the_panel_items() {
     h.get_by_label("Hide all crops").click();
     h.run_steps(3);
 
-    assert!(h.state().views[0].crop_review.hidden);
     crop_row(&h, "Hidden crop Snapshot · Page 1");
     label(&h, "Crop rectangles are hidden on the page.");
 

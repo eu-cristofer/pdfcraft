@@ -97,7 +97,7 @@ impl PdfCraftApp {
                 }
             };
             let created_id = item.id.clone();
-            let inserted = self.session.crop_review_mut(id).map_err(|e| e.to_string()).and_then(|store| store.upsert(item).map(|_| ()));
+            let inserted = self.session.upsert_crop_review_item(id, item).map_err(|e| e.to_string());
             match inserted {
                 Ok(()) => {
                     if self.right.is_none() {

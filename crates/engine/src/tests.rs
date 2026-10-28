@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use chrono::TimeZone;
+
 use super::*;
 
 /// A minimal `n`-page document; page `i` shows "Page i+1".
@@ -834,6 +836,53 @@ fn save_after_undo_retains_the_latest_saved_revision() {
     assert_eq!(page_texts(&session, document), ["Page 1", "Page 3"]);
     assert_eq!(doc.info.pages[0].rotation, 0, "the undone rotation is the current page");
     assert_eq!(doc.info_value("Title").as_deref(), Some("Report"));
+}
+
+#[test]
+fn crop_review_session_helpers_upsert_update_delete_and_keep_next_selection_stable() {
+    let (mut session, id) = session_with(2);
+    let first = export::CropReviewItem {
+        id: "crop-0001".into(),
+        kind: export::ExportItemKind::Snapshot,
+        page_number: 1,
+        rect_pdf: export::CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 },
+        caption: "First".into(),
+        note: None,
+        ocr_text: None,
+        ocr_extracted_at: None,
+        created_at: chrono::Utc.timestamp_opt(10, 0).single().unwrap(),
+        updated_at: chrono::Utc.timestamp_opt(10, 0).single().unwrap(),
+    };
+    let second = export::CropReviewItem {
+        id: "crop-0002".into(),
+        kind: export::ExportItemKind::Snapshot,
+        page_number: 2,
+        rect_pdf: export::CropPdfRect { left: 30.0, bottom: 240.0, right: 90.0, top: 320.0 },
+        caption: "Second".into(),
+        note: Some("note".into()),
+        ocr_text: None,
+        ocr_extracted_at: None,
+        created_at: chrono::Utc.timestamp_opt(20, 0).single().unwrap(),
+        updated_at: chrono::Utc.timestamp_opt(20, 0).single().unwrap(),
+    };
+
+    session.upsert_crop_review_item(id, second.clone()).unwrap();
+    session.upsert_crop_review_item(id, first.clone()).unwrap();
+
+    assert_eq!(
+        session.get(id).unwrap().ordered_crop_review_items().iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+        vec!["crop-0001", "crop-0002"]
+    );
+
+    assert!(session.update_crop_review_metadata(id, "crop-0001", "Updated".into(), Some("changed".into())).unwrap());
+    let updated = session.get(id).unwrap().crop_review().get("crop-0001").unwrap();
+    assert_eq!(updated.caption, "Updated");
+    assert_eq!(updated.note.as_deref(), Some("changed"));
+
+    assert_eq!(session.delete_crop_review_item(id, "crop-0001").unwrap().as_deref(), Some("crop-0002"));
+    assert!(session.get(id).unwrap().crop_review().get("crop-0001").is_none());
+    assert_eq!(session.delete_crop_review_item(id, "crop-0002").unwrap(), None);
+    assert!(session.get(id).unwrap().crop_review().items().is_empty());
 }
 
 #[test]

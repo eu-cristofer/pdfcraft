@@ -1029,29 +1029,10 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     if let Some(edit) = crop_edit {
         match edit {
             crate::crops_panel::PanelEdit::UpdateMetadata { id: crop_id, caption, note } => {
-                if let Ok(store) = app.session.crop_review_mut(id)
-                    && let Some(previous) = store.get(&crop_id).cloned()
-                {
-                    let mut updated = previous;
-                    updated.caption = caption;
-                    updated.note = note;
-                    let _ = store.upsert(updated);
-                }
+                let _ = app.session.update_crop_review_metadata(id, &crop_id, caption, note);
             }
             crate::crops_panel::PanelEdit::Delete { id: crop_id } => {
-                let ordered_ids = app
-                    .session
-                    .get(id)
-                    .map(|doc| doc.ordered_crop_review_items().iter().map(|item| item.id.clone()).collect::<Vec<_>>())
-                    .unwrap_or_default();
-                if let Ok(store) = app.session.crop_review_mut(id) {
-                    let _ = store.remove(&crop_id);
-                }
-                let next = ordered_ids
-                    .iter()
-                    .position(|existing| existing == &crop_id)
-                    .and_then(|index| ordered_ids.get(index + 1).or_else(|| index.checked_sub(1).and_then(|prev| ordered_ids.get(prev))))
-                    .cloned();
+                let next = app.session.delete_crop_review_item(id, &crop_id).ok().flatten();
                 match next {
                     Some(next_id) => app.views[index].crop_review.select(&next_id),
                     None => app.views[index].crop_review.clear(),

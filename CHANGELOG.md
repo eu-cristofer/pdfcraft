@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Refactored** crop-review mutations behind `pdfcraft-engine` session helpers — the desktop crop-review UI now adds, updates, deletes, and project-loads crop items through explicit engine-owned operations instead of mutating the store directly at each call site, while keeping crop selection and project persistence behavior covered by focused regressions.
+
 - **Hardened** embedded crop-review persistence in `pdfcraft-engine` — focused export-path regressions now cover restoring the reserved `pdfcraft-crop-review.json` attachment on open, preserving it through save/reopen, removing it when the crop store becomes empty, and leaving unchanged documents without crop review free of the reserved attachment.
 
 - **Documented** crop-review persistence shapes and invariants — `docs/crop-review-workspace.md` now states that `source.pdf` plus `project.json` remains the canonical relocatable workspace, and it documents the implemented embedded PDF mirror at reserved attachment name `pdfcraft-crop-review.json` with schema-versioned UTF-8 JSON carrying the persisted crop fields.

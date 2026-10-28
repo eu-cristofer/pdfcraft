@@ -5504,6 +5504,32 @@ impl Session {
         Ok(&mut self.doc_mut(id)?.crop_review)
     }
 
+    pub fn upsert_crop_review_item(&mut self, id: DocId, item: export::CropReviewItem) -> Result<(), EditError> {
+        self.doc_mut(id)?.crop_review.upsert(item).map(|_| ()).map_err(EditError::Invalid)
+    }
+
+    pub fn update_crop_review_metadata(&mut self, id: DocId, crop_id: &str, caption: String, note: Option<String>) -> Result<bool, EditError> {
+        let doc = self.doc_mut(id)?;
+        let Some(mut item) = doc.crop_review.get(crop_id).cloned() else { return Ok(false) };
+        item.caption = caption;
+        item.note = note;
+        doc.crop_review.upsert(item).map(|_| true).map_err(EditError::Invalid)
+    }
+
+    pub fn delete_crop_review_item(&mut self, id: DocId, crop_id: &str) -> Result<Option<String>, EditError> {
+        let doc = self.doc_mut(id)?;
+        let ordered_ids = doc.ordered_crop_review_items().iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+        if doc.crop_review.remove(crop_id).is_none() {
+            return Ok(None);
+        }
+        let next = ordered_ids
+            .iter()
+            .position(|existing| existing == crop_id)
+            .and_then(|index| ordered_ids.get(index + 1).or_else(|| index.checked_sub(1).and_then(|prev| ordered_ids.get(prev))))
+            .cloned();
+        Ok(next)
+    }
+
     /// Read document `id`'s font list again if content edits since the last full inspection may
     /// have changed it (Document Properties ▸ Fonts, `doc_info`). A no-op otherwise.
     pub fn refresh_fonts(&mut self, id: DocId) {
