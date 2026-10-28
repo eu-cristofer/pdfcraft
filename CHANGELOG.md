@@ -13,6 +13,10 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Documented** crop-review persistence shapes and invariants — `docs/crop-review-workspace.md` now states that `source.pdf` plus `project.json` remains the canonical relocatable workspace, and it documents the implemented embedded PDF mirror at reserved attachment name `pdfcraft-crop-review.json` with schema-versioned UTF-8 JSON carrying the persisted crop fields.
+
+- **Documented** the current 1.1 crop-review export contract — `manifest.json` now carries canonical per-item `ocr_text`, the package includes derived `report.marker.json` and optional `report.docx`, and `report.tex` is documented with its shipped minimal `enumerate` + `minipage` structure.
+
 - **Registered** sprint project `docs/changes/005_export-contract-hardening/` — follow-up plan to document and harden the evolved crop-review export contract: canonical OCR in `manifest.json`, derived AI-oriented `report.marker.json`, optional `report.docx`, clarified external vs embedded crop-review persistence, and a later refactor toward engine-owned crop-review mutations.
 
 - **Integrated** crop-review export across engine, automation, and UI — snapshot packages can now be emitted from the persisted crop-review dataset with canonical crop ordering and the existing OCR rule, while the original `edit.snapshot` marquee flow remains a separate transient copy/export path.

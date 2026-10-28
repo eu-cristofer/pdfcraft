@@ -1,12 +1,12 @@
 # Crop Review Workspace
 
-Last reviewed: 2026-10-26
+Last reviewed: 2026-10-28
 
 ## Status
 
-This document is the repo-local source of truth for Sprint 1 of `004_crop-review-workspace`.
+This document is the repo-local source of truth for the crop-review workspace contract.
 
-It defines the product contract for the persistent crop-review workspace: what the workspace is, how it differs from the original snapshot tool, what the `Crops` and `Metadata` right-side panels must do, which fields every crop item carries, how canonical ordering and selection synchronization work, what a saved project folder must preserve, and how this workspace feeds later export.
+It defines the product contract for the persistent crop-review workspace: what the workspace is, how it differs from the original snapshot tool, what the `Crops` and `Metadata` right-side panels must do, which fields every crop item carries, how canonical ordering and selection synchronization work, how external project-folder persistence works, how the embedded PDF attachment mirror works, and how this workspace feeds later export.
 
 ## Scope
 
@@ -21,6 +21,7 @@ It covers:
 - the crop geometry rule
 - the canonical crop ordering rule
 - the required on-disk project-folder shape
+- the implemented embedded PDF attachment mirror
 - how later export consumes stored crop items
 
 This note does not define:
@@ -39,10 +40,14 @@ The persistent crop-review workspace is a document-scoped review surface inside 
 It is separate from the original snapshot tool:
 
 - `Edit -> Take a snapshot` remains a transient copy action
-- the persistent crop-review workspace owns durable crop items, right-side review panels, and project-folder persistence
+- the persistent crop-review workspace owns durable crop items, right-side review panels, and persistence
 - later export runs from the stored crop dataset, not from a one-off drag gesture
 
 The workspace model is not UI-local source of truth. Desktop UI and later automation must go through `pdfcraft-engine` and the same persisted crop-review data model.
+
+The canonical relocatable workspace shape remains an explicit project folder containing `source.pdf` plus `project.json`.
+
+In addition, the engine also mirrors crop-review metadata into the open PDF as a reserved embedded attachment. That embedded attachment is implemented behavior, but it is not a second relocatable workspace format because it does not carry copied `source.pdf` bytes.
 
 ## Purpose And Boundaries
 
@@ -54,7 +59,7 @@ The workspace must provide all of the following:
 - an overlay that visualizes the stored crop rectangles on the document
 - a right-side `Crops` panel listing every stored crop item
 - a right-side `Metadata` panel bound to the currently selected crop item
-- project-folder persistence for the source PDF plus crop-review metadata
+- persistence for the source PDF plus crop-review metadata
 
 The workspace must not do any of the following:
 
@@ -174,9 +179,9 @@ The geometry rule is strict:
 
 No additional persisted field is allowed to become a second canonical geometry or ordering source for v1.
 
-## Project Persistence
+## External Project Persistence
 
-A crop-review project is a self-contained folder for one source PDF and its crop dataset.
+A crop-review project folder is the canonical self-contained relocatable workspace for one source PDF and its crop dataset.
 
 The required folder shape is:
 
@@ -199,13 +204,13 @@ Its required top-level shape is:
 
 The top-level rules are:
 
-- `schema_version` is required
+- `schema_version` is required and is currently `1`
 - `source_pdf` is the relative path string `"source.pdf"`
 - `crops` is the canonical ordered array of persisted crop items
 - the folder remains relocatable because it stores no required absolute source path
 - JSON text is written as UTF-8 and user text remains readable rather than ASCII-escaped where the serializer can preserve direct Unicode
 
-Project persistence must preserve, across save and load:
+External project persistence must preserve, across save and load:
 
 - crop `id`
 - `kind`
@@ -219,12 +224,62 @@ Project persistence must preserve, across save and load:
 - `updated_at`
 - canonical item order as defined in this note
 
-Project persistence does not need to preserve transient UI state such as:
+External project persistence does not need to preserve transient UI state such as:
 
 - current selection
 - current zoom
 - current scroll offset
 - open or closed panel state
+
+## Embedded PDF Attachment Mirror
+
+The engine also supports embedded crop-review persistence inside the PDF itself.
+
+The reserved embedded attachment name is:
+
+- `pdfcraft-crop-review.json`
+
+When present, that attachment stores UTF-8 JSON using the same top-level field names as the external project JSON:
+
+```json
+{
+  "schema_version": 1,
+  "source_pdf": "",
+  "crops": []
+}
+```
+
+The embedded-store rules are:
+
+- `schema_version` is required and must match the same schema version used by external project persistence
+- `crops` carries the same canonical ordered array of persisted crop items
+- `source_pdf` is the empty string `""` for embedded persistence
+- the empty `source_pdf` value is intentional because embedded persistence mirrors crop metadata only, not copied `source.pdf` bytes
+
+On open, the engine looks up `pdfcraft-crop-review.json` in the PDF `EmbeddedFiles` name tree, decodes it as UTF-8 JSON, and restores the crop-review store when decoding and schema validation succeed.
+
+If the reserved attachment is missing or invalid, opening falls back to an empty crop-review store.
+
+On save or full save:
+
+- if the crop-review store is empty, the engine removes the reserved attachment
+- otherwise, the engine replaces any prior reserved attachment with a new `pdfcraft-crop-review.json`
+- the written attachment description is `PdfCraft embedded crop review workspace`
+- the written attachment MIME type is derived from the attachment file name
+
+## Relationship Between External And Embedded Persistence
+
+The external project folder and the embedded PDF attachment mirror describe the same crop-review data model, but they are not interchangeable workspace shapes.
+
+The contract is:
+
+- the external `source.pdf` plus `project.json` folder remains the canonical self-contained relocatable workspace
+- the embedded PDF attachment is an implemented mirror of crop metadata inside the PDF
+- both persistence forms use `schema_version` plus the same persisted crop-item fields
+- only the external project folder carries copied `source.pdf` bytes and therefore stands alone after relocation
+- the embedded attachment intentionally uses `source_pdf: ""` and must not be documented as a second relocatable package format
+
+Stated another way: embedded persistence is a document-carried mirror of the crop dataset, while the project folder remains the canonical external workspace contract.
 
 ## Relationship To Later Export
 
@@ -248,4 +303,5 @@ The persistent crop-review workspace and the original snapshot tool are therefor
 
 ## Revision History
 
+- 2026-10-28 — Clarified that the canonical relocatable workspace remains `source.pdf` plus `project.json`, documented the implemented embedded PDF attachment mirror, and locked the reserved attachment name plus the shared persisted JSON field shape.
 - 2026-10-26 — Created the initial crop-review workspace contract for `004_crop-review-workspace`, locking the workspace boundary, right-side panel behavior, field list, geometry rule, canonical ordering, project-folder shape, and export relationship.
