@@ -56,13 +56,22 @@ pub struct ExportDraft {
     pub format: ImageFormat,
     /// Export all images ▸ skip images with fewer pixels than this on their shorter side.
     pub min_side: u32,
+    /// Parent folder where package exports are created.
+    pub destination_dir: String,
     /// A one-rectangle snapshot package draft opened from the marquee flow.
     pub snapshot_package: Option<SnapshotPackageDraft>,
 }
 
 impl Default for ExportDraft {
     fn default() -> Self {
-        Self { dpi: 150.0, range: PageRange::default(), format: ImageFormat::Png, min_side: 0, snapshot_package: None }
+        Self {
+            dpi: 150.0,
+            range: PageRange::default(),
+            format: ImageFormat::Png,
+            min_side: 0,
+            destination_dir: String::new(),
+            snapshot_package: None,
+        }
     }
 }
 
@@ -80,6 +89,21 @@ fn snapshot_package_target(dir: &Path, stem: &str) -> PathBuf {
 
 fn crop_review_package_target(dir: &Path, stem: &str) -> PathBuf {
     dir.join(format!("{stem}_crop_review_package"))
+}
+
+fn typed_export_dir(path: &str) -> Result<PathBuf, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Choose a destination folder or browse to one.".into());
+    }
+    let dir = PathBuf::from(path);
+    if !dir.exists() {
+        return Err(format!("Destination folder does not exist: {}", dir.display()));
+    }
+    if !dir.is_dir() {
+        return Err(format!("Destination path is not a folder: {}", dir.display()));
+    }
+    Ok(dir)
 }
 
 fn snapshot_body(ui: &mut egui::Ui, t: &Tokens, draft: &mut SnapshotPackageDraft) -> (bool, bool) {
@@ -149,10 +173,40 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: E
             .small()
             .color(t.text_faint),
         );
+        ui.add_space(10.0);
+        let final_folder = app
+            .active_ids()
+            .and_then(|(_, id)| app.session.get(id))
+            .map(|d| export_stem(&d.name))
+            .map(|stem| format!("{stem}_crop_review_package"))
+            .unwrap_or_else(|| "export_crop_review_package".into());
+        let label = ui.label(tl!("Destination folder"));
+        ui.horizontal(|ui| {
+            ui.add(widgets::line(&mut app.export_draft.destination_dir).desired_width(320.0)).labelled_by(label.id);
+            if widgets::pill_button(ui, tl!("Browse…"), false).clicked() {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let dialog = rfd::AsyncFileDialog::new().set_title(tl!("Choose a folder for the exported files").to_string());
+                    let _ = app.ask_one(crate::pickers::Ask::Folder(dialog), None, |app, dir| {
+                        app.export_draft.destination_dir = dir.to_string_lossy().into_owned();
+                    });
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    app.notify_tr("Crop review package export requires the desktop app");
+                }
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(crate::i18n::fmt(tl!("Choose the parent folder where PdfCraft will create {name}."), &[("name", &final_folder)]))
+                .small()
+                .color(t.text_faint),
+        );
         ui.add_space(12.0);
         let (mut apply, mut cancel) = (false, false);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let ok = count > 0;
+            let ok = count > 0 && typed_export_dir(&app.export_draft.destination_dir).is_ok();
             if ui.add_enabled_ui(ok, |ui| widgets::pill_button(ui, tl!("Export"), true)).inner.clicked() {
                 apply = true;
             }
@@ -480,11 +534,12 @@ impl PdfCraftApp {
                     }
                     app.export_status = Some(status);
                 };
-                match self.export_dir_override.clone() {
-                    Some(d) => start(self, d.into(), true),
-                    None => {
-                        let dialog = rfd::AsyncFileDialog::new().set_title(tl!("Choose a folder for the exported files").to_string());
-                        self.ask_one(crate::pickers::Ask::Folder(dialog), None, move |app, dir| start(app, dir, false));
+                if let Some(d) = self.export_dir_override.clone() {
+                    start(self, d.into(), true);
+                } else {
+                    match typed_export_dir(&self.export_draft.destination_dir) {
+                        Ok(dir) => start(self, dir, true),
+                        Err(e) => self.notify(e),
                     }
                 }
             }

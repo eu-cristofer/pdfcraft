@@ -91,6 +91,10 @@ fn field<'a>(h: &'a Harness<'static, PdfCraftApp>, label: &'a str) -> egui_kitte
         .unwrap_or_else(|| panic!("no field {label:?}"))
 }
 
+fn label<'a>(h: &'a Harness<'static, PdfCraftApp>, text: &'a str) -> egui_kittest::Node<'a> {
+    h.query_all_by(|node| node.label().as_deref() == Some(text)).next().unwrap_or_else(|| panic!("no label {text:?}"))
+}
+
 fn crop_center(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: CropPdfRect) -> Pos2 {
     let page = h.state().views[0].page_screen_rect(page_number - 1).expect("page on screen");
     let x = ((rect.left + rect.right) * 0.5) / 300.0 * page.width();
@@ -126,6 +130,14 @@ fn crop_corner(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: Crop
     let y_pdf = if top { rect.top } else { rect.bottom };
     let y = (400.0 - y_pdf) / 400.0 * page.height();
     pos2(page.left() + x, page.top() + y)
+}
+
+fn overlay_hit(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: CropPdfRect) -> bool {
+    let mut app = h.state().clone();
+    let Some(doc) = app.session.get(app.views[0].id).cloned() else { return false };
+    let Some((_, xf)) = app.views[0].screen_xforms.iter().find(|(p, _)| *p == page_number - 1) else { return false };
+    let point = crop_center(h, page_number, rect);
+    xf.user_rect(&doc.info, page_number - 1, [rect.left, rect.bottom, rect.right, rect.top]).expand(4.0).contains(point)
 }
 
 #[test]
@@ -183,6 +195,52 @@ fn crops_panel_secondary_line_shows_kind_and_page_number() {
 
     crop_row(&h, "Alpha Snapshot · Page 1");
     crop_row(&h, "Page 2 Snapshot · Page 2");
+}
+
+#[test]
+fn crops_header_menu_opens_export_dialog() {
+    let mut h = harness(|app| {
+        seed(app, [item("exportable", 1, CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 }, "Named crop", 10)]);
+        app.set_option("panel", "crops").unwrap();
+    });
+
+    h.get_by_label("More options").click();
+    h.run_steps(2);
+    h.get_by_label("Export Crop Review Package").click();
+    h.run_steps(3);
+
+    assert!(matches!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Export(pdfcraft_ui_egui::export_ui::ExportKind::CropReviewPackage))));
+}
+
+#[test]
+fn hide_all_crops_hides_overlays_but_keeps_the_panel_items() {
+    let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
+    let mut h = harness(move |app| {
+        seed(app, [item("hidden", 1, rect, "Hidden crop", 10)]);
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("hidden");
+    });
+
+    assert!(!h.state().views[0].crop_review.hidden);
+    crop_row(&h, "Hidden crop Snapshot · Page 1");
+
+    h.get_by_label("More options").click();
+    h.run_steps(2);
+    h.get_by_label("Hide all crops").click();
+    h.run_steps(3);
+
+    assert!(h.state().views[0].crop_review.hidden);
+    crop_row(&h, "Hidden crop Snapshot · Page 1");
+    label(&h, "Crop rectangles are hidden on the page.");
+
+    let center = crop_center(&h, 1, rect);
+    h.hover_at(center);
+    h.run_steps(1);
+    h.drag_at(center);
+    h.run_steps(1);
+    h.drop_at(center);
+    h.run_steps(2);
+    assert_eq!(h.state().views[0].selected_crop(), Some("hidden"), "hidden overlays do not clear selection or delete rows");
 }
 
 #[test]

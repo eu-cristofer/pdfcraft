@@ -3804,8 +3804,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             {
                 view.links.context = Some((i, l.index));
             }
-            let on_crop_review = crate::crops_panel::page_input(&resp, doc, &xf, &ptr, i, view, tool == QuickTool::Select);
-            if tool == QuickTool::Select {
+            let crop_interactive = matches!(tool, QuickTool::Select | QuickTool::CropReview);
+            let on_crop_review = crate::crops_panel::page_input(&resp, doc, &xf, &ptr, i, view, crop_interactive);
+            if crop_interactive {
                 let _ = crate::crops_panel::delete_key(ui.ctx(), doc, view);
             }
             let consumed = on_objects

@@ -27,11 +27,39 @@ pub(crate) enum PanelEdit {
     Delete { id: String },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HeaderAction {
+    Export,
+    ToggleHidden,
+}
+
+pub(crate) fn header_controls(ui: &mut egui::Ui, hidden: bool) -> Option<HeaderAction> {
+    let mut action = None;
+    let more = icons::button(ui, "ellipsis", 26.0, false, tl!("More options"));
+    egui::Popup::menu(&more).show(|ui| {
+        ui.set_min_width(220.0);
+        if ui.button(tl!("Export Crop Review Package")).clicked() {
+            action = Some(HeaderAction::Export);
+            ui.close();
+        }
+        ui.separator();
+        let label = if hidden { tl!("Show all crops") } else { tl!("Hide all crops") };
+        if ui.button(label).clicked() {
+            action = Some(HeaderAction::ToggleHidden);
+            ui.close();
+        }
+    });
+    action
+}
+
 pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut DocView, nav: &mut Option<Nav>) -> Option<PanelEdit> {
     let mut edit = None;
     ui.horizontal(|ui| {
         let label = if view.crop_review.creating { tl!("Stop drawing") } else { tl!("Draw crop") };
         if ui.add(egui::Button::new(label)).clicked() {
+            if !view.crop_review.creating {
+                view.crop_review.hidden = false;
+            }
             view.crop_review.creating = !view.crop_review.creating;
         }
     });
@@ -44,6 +72,11 @@ pub(crate) fn show(ui: &mut egui::Ui, t: &Tokens, doc: &Document, view: &mut Doc
     }
 
     view.crop_review.ensure_selected(doc);
+
+    if view.crop_review.hidden {
+        ui.label(egui::RichText::new(tl!("Crop rectangles are hidden on the page.")).small().color(t.text_faint));
+        ui.add_space(8.0);
+    }
 
     for item in items {
         let selected = view.crop_review.selected.as_deref() == Some(item.id.as_str());
@@ -76,6 +109,9 @@ pub(crate) fn page_input(
 ) -> bool {
     if view.crop_review.creating {
         return crate::zoom_snap::marquee_input(resp, xf, ptr, page, &mut view.marquee, &mut view.marquee_done);
+    }
+    if view.crop_review.hidden {
+        return false;
     }
     if !interactive {
         return false;
@@ -140,6 +176,9 @@ pub(crate) fn paint_page(
     view: &DocView,
     pointer: Option<Pos2>,
 ) {
+    if view.crop_review.hidden && !view.crop_review.creating {
+        return;
+    }
     for item in page_items(doc, page) {
         let base = xf.user_rect(&doc.info, page, user_rect(item));
         let selected = view.crop_review.selected.as_deref() == Some(item.id.as_str());

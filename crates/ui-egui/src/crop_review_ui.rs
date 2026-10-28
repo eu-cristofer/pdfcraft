@@ -9,6 +9,7 @@ pub(crate) struct CropReviewView {
     pub metadata_for: Option<String>,
     pub metadata_caption: String,
     pub metadata_note: String,
+    pub hidden: bool,
     pub creating: bool,
     pub gesture: Option<CropGesture>,
 }
@@ -51,6 +52,7 @@ impl CropReviewView {
         self.metadata_for = None;
         self.metadata_caption.clear();
         self.metadata_note.clear();
+        self.hidden = false;
         self.creating = false;
         self.gesture = None;
     }

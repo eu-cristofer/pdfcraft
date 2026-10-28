@@ -671,6 +671,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let mut panel_edit: Option<pdfcraft_engine::Edit> = None;
     let mut field_properties = None;
     let mut crop_edit: Option<crate::crops_panel::PanelEdit> = None;
+    let mut crop_action: Option<crate::crops_panel::HeaderAction> = None;
     let mut panel_command: Option<&'static str> = None;
     let mut sig_action: Option<crate::sign_ui::PanelAction> = None;
     let mut a11y_action: Option<crate::a11y_ui::PanelAction> = None;
@@ -743,6 +744,9 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         // Right to left: close, "…", filter, search (Acrobat's order left to right).
                         if panel == RightPanel::Comments {
                             panel_command = crate::comments_panel::header_controls(ui, info, view, doc.comments_hidden());
+                        }
+                        if matches!(panel, RightPanel::Crops | RightPanel::Metadata) {
+                            crop_action = crate::crops_panel::header_controls(ui, view.crop_review.hidden).or(crop_action);
                         }
                         if panel == RightPanel::Comments
                             && icons::button(ui, "search", 26.0, view.comments.search.is_some(), tl!("Search comments")).clicked()
@@ -1055,6 +1059,22 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 if let Some(doc) = app.session.get(id) {
                     app.views[index].crop_review.ensure_selected(doc);
                 }
+            }
+        }
+    }
+    if let Some(action) = crop_action {
+        match action {
+            crate::crops_panel::HeaderAction::Export => {
+                app.dialog = Some(crate::Dialog::Export(crate::export_ui::ExportKind::CropReviewPackage));
+            }
+            crate::crops_panel::HeaderAction::ToggleHidden => {
+                let hidden = !app.views[index].crop_review.hidden;
+                app.views[index].crop_review.hidden = hidden;
+                if hidden {
+                    app.views[index].crop_review.creating = false;
+                    app.views[index].crop_review.gesture = None;
+                }
+                app.views[index].invalidate_content();
             }
         }
     }
