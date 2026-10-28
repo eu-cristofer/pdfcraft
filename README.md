@@ -425,7 +425,7 @@ Logs, environment variables and other development notes are in [docs/development
 ## What's next
 
 Active implementation plans live under `docs/changes/`; the current queued project is
-[`004_crop-review-workspace`](docs/changes/004_crop-review-workspace/README.md).
+[`005_export-contract-hardening`](docs/changes/005_export-contract-hardening/README.md).
 
 Snapshot export v1 is now specified in [`docs/snapshot-export-spec.md`](docs/snapshot-export-spec.md):
 canonical `manifest.json`, deterministic `report.tex`, `source.pdf`, and PNG evidence crops from one
