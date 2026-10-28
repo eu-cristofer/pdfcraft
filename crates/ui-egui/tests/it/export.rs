@@ -166,11 +166,14 @@ fn crop_review_export_uses_stored_items_not_a_transient_marquee() {
     h.state_mut().set_option("dialog", "export-crop-review-package").unwrap();
     h.run_steps(2);
     h.get_by_label("Export Crop Review Package");
+    h.get_by_label("Also write report.docx").click();
+    h.run_steps(1);
     h.get_by_label("Export").click();
     h.run_steps(6);
 
     let package = dir.join("doc_crop_review_package");
     assert!(package.is_dir());
+    assert!(package.join("report.docx").is_file());
     let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(package.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["items"][0]["caption"], "First stored crop");
     assert_eq!(manifest["items"][1]["caption"], "Second stored crop");
@@ -180,4 +183,6 @@ fn crop_review_export_uses_stored_items_not_a_transient_marquee() {
     } else {
         assert!(!report.contains("\\paragraph{OCR.}"), "{report}");
     }
+    let docx = std::fs::read(package.join("report.docx")).unwrap();
+    assert!(docx.windows(b"word/document.xml".len()).any(|w| w == b"word/document.xml"));
 }

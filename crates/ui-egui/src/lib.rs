@@ -2697,6 +2697,9 @@ impl PdfCraftApp {
         v["organize_zoom"] = serde_json::json!(self.organize_zoom);
         // Canonical names survive changes to the order of PAPERS and do not depend on UI language.
         v["print_paper"] = serde_json::json!(pdfcraft_engine::print::PAPERS.get(self.print_draft.paper).map(|(name, _)| *name));
+        v["export_destination_dir"] = serde_json::json!(self.export_draft.destination_dir);
+        v["export_package_dir_name"] = serde_json::json!(self.export_draft.package_dir_name);
+        v["export_include_word_report"] = serde_json::Value::Bool(self.export_draft.include_word_report);
         v.to_string()
     }
 
@@ -2776,6 +2779,15 @@ impl PdfCraftApp {
             .and_then(|name| pdfcraft_engine::print::PAPERS.iter().position(|(canonical, _)| *canonical == name))
         {
             self.print_draft.paper = paper;
+        }
+        if let Some(dir) = v["export_destination_dir"].as_str() {
+            self.export_draft.destination_dir = dir.to_string();
+        }
+        if let Some(name) = v["export_package_dir_name"].as_str() {
+            self.export_draft.package_dir_name = name.to_string();
+        }
+        if let Some(include) = v["export_include_word_report"].as_bool() {
+            self.export_draft.include_word_report = include;
         }
         if let Some(on) = v["highlight_fields"].as_bool() {
             self.view_defaults.highlight_fields = on;

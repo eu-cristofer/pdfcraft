@@ -216,6 +216,8 @@ impl Document {
             items: self.crop_review_snapshot_export_items()?,
             render_source: self.export_source(),
             source_pdf_bytes: self.bytes.clone(),
+            title: self.info.title.clone().unwrap_or_else(|| self.name.trim_end_matches(".pdf").to_string()),
+            include_word_report: false,
         })
     }
 }
@@ -432,6 +434,10 @@ pub struct SnapshotExportPackageInput {
     pub render_source: ExportSource,
     /// Working-file bytes for `source.pdf`.
     pub source_pdf_bytes: Arc<Vec<u8>>,
+    /// Title used by derived convenience artifacts such as `report.docx`.
+    pub title: String,
+    /// Whether the package should also include a derived Word report.
+    pub include_word_report: bool,
 }
 
 /// A selected comment in the engine-facing 1-based page/index shape shared with other comment
@@ -666,6 +672,7 @@ const SNAPSHOT_EXPORT_PACKAGE_KIND: &str = "pdfcraft.snapshot_export";
 const SNAPSHOT_EXPORT_MANIFEST_VERSION: &str = "1.0";
 const SNAPSHOT_EXPORT_MANIFEST_PATH: &str = "manifest.json";
 const SNAPSHOT_EXPORT_REPORT_PATH: &str = "report.tex";
+const SNAPSHOT_EXPORT_REPORT_DOCX_PATH: &str = "report.docx";
 const SNAPSHOT_EXPORT_EVIDENCE_DIR: &str = "evidence";
 const SNAPSHOT_EXPORT_SOURCE_PDF_PATH: &str = "source.pdf";
 const SNAPSHOT_EXPORT_SOURCE_PDF_STATE: &str = "working-copy";
@@ -893,33 +900,36 @@ pub fn snapshot_export_manifest_json(items: &[SnapshotExportItem]) -> Result<Str
 pub fn snapshot_export_report_tex(items: &[SnapshotExportItem]) -> Result<String, String> {
     validate_snapshot_export_contract_items(items)?;
 
-    let mut out = String::from("\\section*{Snapshot Evidence}\n\n");
-    for (index, item) in items.iter().enumerate() {
-        out.push_str("\\begin{figure}[htbp]\n");
-        out.push_str("\\centering\n");
-        out.push_str(&format!("\\includegraphics[width=\\linewidth]{{{}}}\n", item.image_path));
-        out.push_str(&format!("\\caption{{{}}}\n", latex_escape_plain_text(&item.metadata.caption)));
-        out.push_str(&format!("\\label{{fig:{}}}\n", item.id));
-        out.push_str("\\end{figure}\n");
-
-        if let Some(note) = item.metadata.note.as_deref() {
-            out.push('\n');
-            out.push_str("\\paragraph{Note.}\n");
-            out.push_str(&latex_escape_plain_text(note));
-            out.push('\n');
-        }
+    let mut out = String::from(concat!(
+        "\\documentclass{article}\n",
+        "\\usepackage[T1]{fontenc}\n",
+        "\\usepackage[utf8]{inputenc}\n",
+        "\\usepackage{graphicx}\n",
+        "\\usepackage{caption}\n",
+        "\\usepackage{csquotes}\n",
+        "\\begin{document}\n\n",
+        "\\begin{enumerate}\n"
+    ));
+    for item in items {
+        let item_text = item.metadata.note.as_deref().map(str::trim).filter(|text| !text.is_empty()).unwrap_or(item.metadata.caption.as_str());
+        out.push_str(&format!("    \\item Conforme a Figura~\\ref{{fig:{}}}, {}.\n\n", item.id, latex_escape_plain_text(item_text)));
+        out.push_str("\\noindent\\begin{minipage}[t]{\\linewidth}\n");
+        out.push_str("    \\vspace{0pt}\n");
+        out.push_str("    \\centering\n");
+        out.push_str(&format!("    \\fbox{{\\includegraphics[width=\\linewidth]{{{}}}}}\n", item.image_path));
+        out.push_str("    \\captionsetup{justification=centering}\n");
+        out.push_str(&format!("    \\captionof{{figure}}{{{}}}\n", latex_escape_plain_text(&item.metadata.caption)));
+        out.push_str(&format!("    \\label{{fig:{}}}\n", item.id));
+        out.push_str("\\end{minipage}\n");
 
         if let Some(ocr) = item.ocr.as_ref().map(|ocr| ocr.text.trim()).filter(|text| !text.is_empty()) {
-            out.push('\n');
-            out.push_str("\\paragraph{OCR.}\n");
-            out.push_str(&latex_escape_plain_text(ocr));
-            out.push('\n');
+            out.push_str("\n");
+            out.push_str(&format!("\\noindent OCR.: {}\n", latex_escape_plain_text(ocr)));
         }
 
-        if index + 1 != items.len() {
-            out.push('\n');
-        }
+        out.push_str("\n");
     }
+    out.push_str("\\end{enumerate}\n\n\\end{document}\n");
 
     Ok(out)
 }
@@ -1144,15 +1154,17 @@ fn render_snapshot_export_images(
     source: &ExportSource,
     items: &[SnapshotExportItem],
     hooks: &SnapshotExportWriteHooks,
-) -> Result<(), String> {
+) -> Result<Vec<Vec<u8>>, String> {
     let evidence_dir = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_EVIDENCE_DIR)?;
     std::fs::create_dir_all(&evidence_dir).map_err(|e| format!("could not create {}: {e}", evidence_dir.display()))?;
     let mut renderer = PageRenderer::new(source.bytes.clone(), source.config.clone());
+    let mut rendered = Vec::with_capacity(items.len());
     for item in items {
         let png = render_snapshot_export_item_png(&mut renderer, source, item)?;
         write_snapshot_export_file(root, &item.image_path, &png, hooks)?;
+        rendered.push(png);
     }
-    Ok(())
+    Ok(rendered)
 }
 
 fn snapshot_export_png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
@@ -1161,12 +1173,72 @@ fn snapshot_export_png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     Ok((info.width, info.height))
 }
 
+fn snapshot_export_report_docx(title: &str, items: &[SnapshotExportItem], images: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+    validate_snapshot_export_contract_items(items)?;
+    if images.len() != items.len() {
+        return Err(format!("snapshot export Word report expects {} rendered images, got {}", items.len(), images.len()));
+    }
+
+    let pages = items
+        .iter()
+        .zip(images)
+        .map(|(item, bytes)| {
+            let mut blocks = vec![pdfcraft_export::Block {
+                text: item.metadata.caption.clone(),
+                rect: [72.0, 720.0, 540.0, 744.0],
+                size: 14.0,
+                bold: true,
+                italic: false,
+                color: [0.0, 0.0, 0.0],
+                rotation: 0.0,
+                space_around: [false, false],
+            }];
+            if let Some(note) = item.metadata.note.as_deref().map(str::trim).filter(|text| !text.is_empty()) {
+                blocks.push(pdfcraft_export::Block {
+                    text: note.to_owned(),
+                    rect: [72.0, 680.0, 540.0, 704.0],
+                    size: 11.0,
+                    bold: false,
+                    italic: false,
+                    color: [0.0, 0.0, 0.0],
+                    rotation: 0.0,
+                    space_around: [false, false],
+                });
+            }
+            if let Some(ocr) = item.ocr.as_ref().map(|ocr| ocr.text.trim()).filter(|text| !text.is_empty()) {
+                blocks.push(pdfcraft_export::Block {
+                    text: format!("OCR.: {ocr}"),
+                    rect: [72.0, 640.0, 540.0, 664.0],
+                    size: 10.0,
+                    bold: false,
+                    italic: false,
+                    color: [0.0, 0.0, 0.0],
+                    rotation: 0.0,
+                    space_around: [false, false],
+                });
+            }
+            let image_height = f64::from(item.rect.height.max(1.0));
+            let image_width = f64::from(item.rect.width.max(1.0));
+            let images = vec![pdfcraft_export::Image {
+                ext: "png",
+                bytes: std::sync::Arc::from(bytes.clone()),
+                rect: [72.0, 300.0, 72.0 + image_width, 300.0 + image_height],
+                size: [image_width, image_height],
+                rotation: 0.0,
+            }];
+            pdfcraft_export::Page { width: 612.0, height: 792.0, blocks, images, background: None }
+        })
+        .collect::<Vec<_>>();
+    Ok(pdfcraft_export::docx(&pages, title))
+}
+
 fn validate_snapshot_export_package_dir(
     root: &Path,
     source_pdf_bytes: &[u8],
     items: &[SnapshotExportItem],
     manifest_json: &str,
     report_tex: &str,
+    report_docx: Option<&[u8]>,
 ) -> Result<(), String> {
     if !root.is_dir() {
         return Err(format!("snapshot export package root {} was not created", root.display()));
@@ -1175,6 +1247,7 @@ fn validate_snapshot_export_package_dir(
     let manifest_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_MANIFEST_PATH)?;
     let source_pdf_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_SOURCE_PDF_PATH)?;
     let report_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_REPORT_PATH)?;
+    let report_docx_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_REPORT_DOCX_PATH)?;
     let evidence_dir = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_EVIDENCE_DIR)?;
 
     let staged_manifest = std::fs::read_to_string(&manifest_path).map_err(|e| format!("could not read {}: {e}", manifest_path.display()))?;
@@ -1185,6 +1258,20 @@ fn validate_snapshot_export_package_dir(
     let staged_report = std::fs::read_to_string(&report_path).map_err(|e| format!("could not read {}: {e}", report_path.display()))?;
     if staged_report != report_tex {
         return Err("snapshot export report.tex does not match the generated report".into());
+    }
+
+    match report_docx {
+        Some(bytes) => {
+            let staged_docx = std::fs::read(&report_docx_path).map_err(|e| format!("could not read {}: {e}", report_docx_path.display()))?;
+            if staged_docx != bytes {
+                return Err("snapshot export report.docx does not match the generated report".into());
+            }
+        }
+        None => {
+            if report_docx_path.exists() {
+                return Err(format!("snapshot export wrote unexpected {}", report_docx_path.display()));
+            }
+        }
     }
 
     let staged_source = std::fs::read(&source_pdf_path).map_err(|e| format!("could not read {}: {e}", source_pdf_path.display()))?;
@@ -1277,8 +1364,22 @@ fn write_snapshot_export_package_with_hooks(
         write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_MANIFEST_PATH, manifest_json.as_bytes(), hooks)?;
         write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_SOURCE_PDF_PATH, input.source_pdf_bytes.as_slice(), hooks)?;
         write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_REPORT_PATH, report_tex.as_bytes(), hooks)?;
-        render_snapshot_export_images(&stage, &input.render_source, &input.items, hooks)?;
-        validate_snapshot_export_package_dir(&stage, input.source_pdf_bytes.as_slice(), &input.items, &manifest_json, &report_tex)?;
+        let images = render_snapshot_export_images(&stage, &input.render_source, &input.items, hooks)?;
+        let report_docx = if input.include_word_report {
+            let bytes = snapshot_export_report_docx(&input.title, &input.items, &images)?;
+            write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_REPORT_DOCX_PATH, &bytes, hooks)?;
+            Some(bytes)
+        } else {
+            None
+        };
+        validate_snapshot_export_package_dir(
+            &stage,
+            input.source_pdf_bytes.as_slice(),
+            &input.items,
+            &manifest_json,
+            &report_tex,
+            report_docx.as_deref(),
+        )?;
         if target.exists() {
             return Err(format!("snapshot export target already exists: {}", target.display()));
         }
@@ -2014,21 +2115,34 @@ mod snapshot_export_artifact_tests {
         let tex = snapshot_export_report_tex(&sample_items()).unwrap();
 
         let expected = concat!(
-            "\\section*{Snapshot Evidence}\n\n",
-            "\\begin{figure}[htbp]\n",
-            "\\centering\n",
-            "\\includegraphics[width=\\linewidth]{evidence/item_1.png}\n",
-            "\\caption{50\\% approved \\& signed \\#1}\n",
-            "\\label{fig:item_1}\n",
-            "\\end{figure}\n\n",
-            "\\paragraph{Note.}\n",
-            "Path C:\\textbackslash{}exports\\textbackslash{}item\\_\\{1\\} uses \\~{} temp \\^{} dir and costs \\$5.\n\n",
-            "\\begin{figure}[htbp]\n",
-            "\\centering\n",
-            "\\includegraphics[width=\\linewidth]{evidence/item_2.png}\n",
-            "\\caption{Comment \\{callout\\} \\_ review}\n",
-            "\\label{fig:item_2}\n",
-            "\\end{figure}\n"
+            "\\documentclass{article}\n",
+            "\\usepackage[T1]{fontenc}\n",
+            "\\usepackage[utf8]{inputenc}\n",
+            "\\usepackage{graphicx}\n",
+            "\\usepackage{caption}\n",
+            "\\usepackage{csquotes}\n",
+            "\\begin{document}\n\n",
+            "\\begin{enumerate}\n",
+            "    \\item Conforme a Figura~\\ref{fig:item_1}, Path C:\\textbackslash{}exports\\textbackslash{}item\\_\\{1\\} uses \\~{} temp \\^{} dir and costs \\$5..\n\n",
+            "\\noindent\\begin{minipage}[t]{\\linewidth}\n",
+            "    \\vspace{0pt}\n",
+            "    \\centering\n",
+            "    \\fbox{\\includegraphics[width=\\linewidth]{evidence/item_1.png}}\n",
+            "    \\captionsetup{justification=centering}\n",
+            "    \\captionof{figure}{50\\% approved \\& signed \\#1}\n",
+            "    \\label{fig:item_1}\n",
+            "\\end{minipage}\n\n",
+            "    \\item Conforme a Figura~\\ref{fig:item_2}, Comment \\{callout\\} \\_ review.\n\n",
+            "\\noindent\\begin{minipage}[t]{\\linewidth}\n",
+            "    \\vspace{0pt}\n",
+            "    \\centering\n",
+            "    \\fbox{\\includegraphics[width=\\linewidth]{evidence/item_2.png}}\n",
+            "    \\captionsetup{justification=centering}\n",
+            "    \\captionof{figure}{Comment \\{callout\\} \\_ review}\n",
+            "    \\label{fig:item_2}\n",
+            "\\end{minipage}\n\n",
+            "\\end{enumerate}\n\n",
+            "\\end{document}\n"
         );
 
         assert_eq!(tex, expected);
@@ -2043,13 +2157,13 @@ mod snapshot_export_artifact_tests {
         let parsed: Value = serde_json::from_str(&manifest).unwrap();
         let manifest_items = parsed["items"].as_array().unwrap();
         assert_eq!(manifest_items.len(), items.len());
-        assert_eq!(tex.matches("\\begin{figure}[htbp]").count(), items.len());
+        assert_eq!(tex.matches("\\begin{minipage}[t]{\\linewidth}").count(), items.len());
 
         for manifest_item in manifest_items {
             let id = manifest_item["id"].as_str().unwrap();
             let path = manifest_item["image"]["path"].as_str().unwrap();
             assert!(tex.contains(&format!("\\label{{fig:{id}}}")), "{id}");
-            assert!(tex.contains(&format!("\\includegraphics[width=\\linewidth]{{{path}}}")), "{id}");
+            assert!(tex.contains(&format!("\\fbox{{\\includegraphics[width=\\linewidth]{{{path}}}}}")), "{id}");
         }
     }
 
@@ -2068,7 +2182,7 @@ mod snapshot_export_artifact_tests {
         .unwrap();
 
         let tex = snapshot_export_report_tex(&items).unwrap();
-        assert!(tex.contains("\\paragraph{OCR.}\nDerived OCR text\n"), "{tex}");
+        assert!(tex.contains("\\noindent OCR.: Derived OCR text\n"), "{tex}");
     }
 }
 
@@ -2158,7 +2272,13 @@ mod snapshot_export_package_tests {
     }
 
     fn package_input(items: Vec<super::SnapshotExportItem>, source: ExportSource) -> SnapshotExportPackageInput {
-        SnapshotExportPackageInput { items, source_pdf_bytes: source.bytes.clone(), render_source: source }
+        SnapshotExportPackageInput {
+            items,
+            source_pdf_bytes: source.bytes.clone(),
+            render_source: source,
+            title: "Export test".into(),
+            include_word_report: false,
+        }
     }
 
     fn png_size(path: &std::path::Path) -> (u32, u32) {
@@ -2264,6 +2384,33 @@ mod snapshot_export_package_tests {
 
         assert_eq!(png_size(&target.join("evidence/item_1.png")), (80, 60));
         assert_eq!(png_size(&target.join("evidence/item_2.png")), (100, 80));
+    }
+
+    #[test]
+    fn package_export_can_include_a_word_report() {
+        let source = source(&["0 0 0 rg 20 30 40 50 re f"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
+                metadata: metadata("Black box", Some("One item")),
+                ocr: None,
+            }],
+        )
+        .unwrap();
+
+        let dir = TestDir::new("one-item-word");
+        let target = dir.child("package");
+        let mut input = package_input(items, source);
+        input.include_word_report = true;
+
+        write_snapshot_export_package(&target, input).unwrap();
+
+        let docx = std::fs::read(target.join("report.docx")).unwrap();
+        assert!(docx.windows(b"word/document.xml".len()).any(|w| w == b"word/document.xml"));
+        assert!(docx.windows(b"word/media/image1.png".len()).any(|w| w == b"word/media/image1.png"));
     }
 
     #[test]

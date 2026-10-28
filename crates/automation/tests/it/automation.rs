@@ -791,6 +791,42 @@ fn snapshot_package_export_through_tools() {
 }
 
 #[test]
+fn crop_review_package_export_can_also_write_word_report() {
+    let dir = workdir("crop-review-package-word");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    {
+        let store = a.session_mut().crop_review_mut(pdfcraft_engine::DocId(doc)).unwrap();
+        store
+            .upsert(pdfcraft_engine::export::CropReviewItem {
+                id: "crop-0001".into(),
+                kind: pdfcraft_engine::export::ExportItemKind::Snapshot,
+                page_number: 1,
+                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 10.0, bottom: 60.0, right: 90.0, top: 140.0 },
+                caption: "First page".into(),
+                note: Some("First in canonical order".into()),
+                ocr_text: None,
+                ocr_extracted_at: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+    }
+    let args = json!({ "doc": doc, "out": "package", "word": true });
+    if !pdfcraft_engine::ocr::available() {
+        assert!(matches!(
+            a.call("doc_export_crop_review_package", &args),
+            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
+        ));
+        return;
+    }
+    ok(&mut a, "doc_export_crop_review_package", args);
+
+    let docx = std::fs::read(dir.join("package/report.docx")).unwrap();
+    assert!(docx.windows(b"word/document.xml".len()).any(|w| w == b"word/document.xml"));
+}
+
+#[test]
 fn snapshot_package_export_keeps_request_order_for_multiple_items() {
     let dir = workdir("snapshot-package-order");
     let mut a = auto(&dir);
@@ -942,6 +978,7 @@ fn crop_review_package_tool_schema_requires_only_doc_and_out() {
     assert!(!tool.read_only);
     assert!(tool.destructive);
     assert_eq!(tool.input_schema["required"], json!(["doc", "out"]));
+    assert_eq!(tool.input_schema["properties"]["word"]["type"], "boolean");
 }
 
 #[test]

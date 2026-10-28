@@ -1527,9 +1527,14 @@ impl Automation {
     }
 
     fn export_snapshot_package(&mut self, a: &Args) -> Result<Value> {
-        let (page_count, render_source, source_pdf_bytes) = {
+        let (page_count, render_source, source_pdf_bytes, title) = {
             let doc = self.doc_to_copy(a)?;
-            (doc.info.pages.len(), doc.export_source(), doc.bytes.clone())
+            (
+                doc.info.pages.len(),
+                doc.export_source(),
+                doc.bytes.clone(),
+                doc.info.title.clone().unwrap_or_else(|| doc.name.trim_end_matches(".pdf").to_string()),
+            )
         };
         let items_value = a.get("items").ok_or_else(|| Args::missing("items"))?;
         let items = items_value.as_array().ok_or_else(|| Args::wrong("items", "an array of item objects"))?;
@@ -1575,7 +1580,13 @@ impl Automation {
             .collect::<Vec<_>>();
         pdfcraft_engine::export::write_snapshot_export_package(
             &target,
-            pdfcraft_engine::export::SnapshotExportPackageInput { items, render_source, source_pdf_bytes },
+            pdfcraft_engine::export::SnapshotExportPackageInput {
+                items,
+                render_source,
+                source_pdf_bytes,
+                title,
+                include_word_report: a.opt_bool("word")?.unwrap_or(false),
+            },
         )
         .map_err(failed)?;
         Ok(json!({ "path": target.to_string_lossy(), "count": listed.len(), "items": listed }))
@@ -1585,6 +1596,7 @@ impl Automation {
         let doc = self.doc_to_copy(a)?;
         let target = self.resolve(a.str("out")?, true)?;
         let mut input = doc.crop_review_snapshot_export_package_input().map_err(failed)?;
+        input.include_word_report = a.opt_bool("word")?.unwrap_or(false);
         if input.items.is_empty() {
             return Err(failed("the crop review workspace has no stored crop items to export"));
         }

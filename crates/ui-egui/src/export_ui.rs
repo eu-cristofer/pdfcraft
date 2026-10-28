@@ -58,6 +58,10 @@ pub struct ExportDraft {
     pub min_side: u32,
     /// Parent folder where package exports are created.
     pub destination_dir: String,
+    /// Name of the package directory to create inside `destination_dir`.
+    pub package_dir_name: String,
+    /// Whether crop review package export should also write report.docx.
+    pub include_word_report: bool,
     /// A one-rectangle snapshot package draft opened from the marquee flow.
     pub snapshot_package: Option<SnapshotPackageDraft>,
 }
@@ -70,6 +74,8 @@ impl Default for ExportDraft {
             format: ImageFormat::Png,
             min_side: 0,
             destination_dir: String::new(),
+            package_dir_name: String::new(),
+            include_word_report: false,
             snapshot_package: None,
         }
     }
@@ -91,6 +97,10 @@ fn crop_review_package_target(dir: &Path, stem: &str) -> PathBuf {
     dir.join(format!("{stem}_crop_review_package"))
 }
 
+fn suggested_crop_review_package_dir_name(stem: &str) -> String {
+    format!("{stem}_crop_review_package")
+}
+
 fn typed_export_dir(path: &str) -> Result<PathBuf, String> {
     let path = path.trim();
     if path.is_empty() {
@@ -104,6 +114,20 @@ fn typed_export_dir(path: &str) -> Result<PathBuf, String> {
         return Err(format!("Destination path is not a folder: {}", dir.display()));
     }
     Ok(dir)
+}
+
+fn typed_package_dir_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Choose a package folder name.".into());
+    }
+    if matches!(name, "." | "..") {
+        return Err("Package folder name must not be . or ...".into());
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err("Package folder name must not contain path separators.".into());
+    }
+    Ok(name.to_string())
 }
 
 fn snapshot_body(ui: &mut egui::Ui, t: &Tokens, draft: &mut SnapshotPackageDraft) -> (bool, bool) {
@@ -174,12 +198,15 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: E
             .color(t.text_faint),
         );
         ui.add_space(10.0);
-        let final_folder = app
+        let suggested_name = app
             .active_ids()
             .and_then(|(_, id)| app.session.get(id))
             .map(|d| export_stem(&d.name))
-            .map(|stem| format!("{stem}_crop_review_package"))
+            .map(|stem| suggested_crop_review_package_dir_name(&stem))
             .unwrap_or_else(|| "export_crop_review_package".into());
+        if app.export_draft.package_dir_name.trim().is_empty() {
+            app.export_draft.package_dir_name = suggested_name.clone();
+        }
         let label = ui.label(tl!("Destination folder"));
         ui.horizontal(|ui| {
             ui.add(widgets::line(&mut app.export_draft.destination_dir).desired_width(320.0)).labelled_by(label.id);
@@ -198,15 +225,31 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: E
             }
         });
         ui.add_space(6.0);
+        let label = ui.label(tl!("Package folder name"));
+        ui.add(widgets::line(&mut app.export_draft.package_dir_name).desired_width(320.0)).labelled_by(label.id);
+        ui.add_space(6.0);
+        let final_folder = match (typed_export_dir(&app.export_draft.destination_dir), typed_package_dir_name(&app.export_draft.package_dir_name)) {
+            (Ok(dir), Ok(name)) => dir.join(name).display().to_string(),
+            (Ok(dir), Err(_)) => dir.join(app.export_draft.package_dir_name.trim()).display().to_string(),
+            _ => {
+                let name = app.export_draft.package_dir_name.trim();
+                if name.is_empty() { suggested_name.clone() } else { name.to_string() }
+            }
+        };
+        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Final package folder: {path}"), &[("path", &final_folder)])).small().color(t.text_faint));
         ui.label(
-            egui::RichText::new(crate::i18n::fmt(tl!("Choose the parent folder where PdfCraft will create {name}."), &[("name", &final_folder)]))
+            egui::RichText::new(tl!("Choose the parent folder and the package folder name PdfCraft will create inside it."))
                 .small()
                 .color(t.text_faint),
         );
+        ui.add_space(8.0);
+        ui.add(widgets::checkbox(&mut app.export_draft.include_word_report, tl!("Also write report.docx")));
         ui.add_space(12.0);
         let (mut apply, mut cancel) = (false, false);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let ok = count > 0 && typed_export_dir(&app.export_draft.destination_dir).is_ok();
+            let ok = count > 0
+                && typed_export_dir(&app.export_draft.destination_dir).is_ok()
+                && typed_package_dir_name(&app.export_draft.package_dir_name).is_ok();
             if ui.add_enabled_ui(ok, |ui| widgets::pill_button(ui, tl!("Export"), true)).inner.clicked() {
                 apply = true;
             }
@@ -436,7 +479,7 @@ fn run_snapshot_package_export(
 
     let target = snapshot_package_target(&dir, &stem);
     let shown = target.display().to_string();
-    let input = SnapshotExportPackageInput { items, render_source: src, source_pdf_bytes };
+    let input = SnapshotExportPackageInput { items, render_source: src, source_pdf_bytes, title: stem.clone(), include_word_report: false };
 
     let msg = match write_snapshot_export_package(&target, input) {
         Ok(()) => crate::i18n::fmt(tl!("Exported snapshot package to {dir}"), &[("dir", &shown)]),
@@ -514,7 +557,10 @@ impl PdfCraftApp {
         }
         if kind == ExportKind::CropReviewPackage {
             let input = match doc.crop_review_snapshot_export_package_input() {
-                Ok(input) => input,
+                Ok(mut input) => {
+                    input.include_word_report = self.export_draft.include_word_report;
+                    input
+                }
                 Err(e) => {
                     self.notify_fmt("Export stopped: {e}", &[("e", &e)]);
                     return;
@@ -537,9 +583,10 @@ impl PdfCraftApp {
                 if let Some(d) = self.export_dir_override.clone() {
                     start(self, d.into(), true);
                 } else {
-                    match typed_export_dir(&self.export_draft.destination_dir) {
-                        Ok(dir) => start(self, dir, true),
-                        Err(e) => self.notify(e),
+                    match (typed_export_dir(&self.export_draft.destination_dir), typed_package_dir_name(&self.export_draft.package_dir_name)) {
+                        (Ok(dir), Ok(name)) => start(self, dir.join(name), true),
+                        (Err(e), _) => self.notify(e),
+                        (_, Err(e)) => self.notify(e),
                     }
                 }
             }

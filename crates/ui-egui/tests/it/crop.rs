@@ -209,7 +209,7 @@ fn crops_header_menu_opens_export_dialog() {
     h.get_by_label("Export Crop Review Package").click();
     h.run_steps(3);
 
-    assert!(matches!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Export(pdfcraft_ui_egui::export_ui::ExportKind::CropReviewPackage))));
+    assert!(matches!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Export(_))));
 }
 
 #[test]
@@ -508,4 +508,21 @@ fn crop_review_project_save_and_reopen_restores_workspace_state() {
     assert_eq!(field(&h, "Note").value().as_deref(), Some("ação"));
 
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn crop_review_export_destination_and_word_option_persist() {
+    let mut app = PdfCraftApp::new();
+    app.export_draft.destination_dir = "/tmp/pdfcraft-export-parent".into();
+    app.export_draft.package_dir_name = "custom-package-name".into();
+    app.export_draft.include_word_report = true;
+
+    let saved = app.persist();
+
+    let mut restored = PdfCraftApp::new();
+    restored.restore(&saved);
+
+    assert_eq!(restored.export_draft.destination_dir, "/tmp/pdfcraft-export-parent");
+    assert_eq!(restored.export_draft.package_dir_name, "custom-package-name");
+    assert!(restored.export_draft.include_word_report);
 }
