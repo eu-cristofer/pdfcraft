@@ -254,6 +254,12 @@ Field rules:
 - `note`: OPTIONAL. Plain-text explanatory note. If present, it MUST be a string.
 - `ocr_text`: OPTIONAL. Plain-text OCR of the same selected portion. If present, it MUST be a string.
 
+`ocr_text` extraction rule:
+
+- Producers SHOULD extract existing native page text from the same selected rectangle first when that portion of the exported document state already has a usable text layer.
+- Producers SHOULD fall back to bitmap OCR of the same selected rectangle only when no usable native text is available there.
+- Producers MUST NOT fill `ocr_text` from a different rectangle, whole-page transcript, comment body, or downstream report-only pass.
+
 ### `rect`
 
 `rect` fields:

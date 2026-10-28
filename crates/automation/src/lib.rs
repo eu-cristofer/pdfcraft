@@ -1561,6 +1561,7 @@ impl Automation {
                     note: item_args.opt_str("note")?.map(str::to_owned),
                 },
                 ocr: None,
+                allow_ocr_fill: true,
             });
         }
 

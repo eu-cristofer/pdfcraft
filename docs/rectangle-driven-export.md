@@ -172,6 +172,12 @@ The OCR source is:
 - the same displayed-page rectangle as the exported crop
 - the same exported document state
 
+Extraction order for shipped v1.1 behavior:
+
+- exporters SHOULD extract existing page text from the selected rectangle first when the PDF already carries a usable text layer for that portion
+- exporters SHOULD fall back to bitmap OCR of the same selected rectangle only when no usable native text is available there
+- whichever path succeeds, the resulting `ocr_text` still belongs to the same selected portion and stays tied to that rectangle only
+
 OCR is not:
 
 - whole-page OCR attached loosely to the item
@@ -224,6 +230,7 @@ Required rules:
 - labels MUST remain derived from item IDs only
 - note text MUST come from the manifest `note` field only
 - OCR text MUST come from `manifest.items[*].ocr_text` for the same selected portion only
+- when native page text exists for that selected portion, derived outputs MUST use that manifest text rather than rerunning an unrelated OCR pass downstream
 - all user-authored and OCR text MUST be emitted as escaped plain text
 
 ### 8. What remains out of scope for LaTeX
