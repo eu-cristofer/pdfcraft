@@ -445,6 +445,7 @@ pub struct Document {
     /// drawn with `?` in its place (see [`TextNotice`]). The interface shows it; tools return it.
     pub edit_notices: Vec<TextNotice>,
     pub crop_review: export::CropReviewStore,
+    crop_review_dirty: bool,
 }
 
 /// Text an edit stored as typed but drew with `?` in place of `ch`, because the font it is drawn
@@ -4045,6 +4046,7 @@ impl Session {
             xfa_warnings: Vec::new(),
             edit_notices: Vec::new(),
             crop_review: embedded_crops,
+            crop_review_dirty: false,
         }
     }
 
@@ -4328,7 +4330,14 @@ impl Session {
     /// file is clean; undo past a later save is not, because the restored snapshot's own base
     /// is an earlier revision.
     fn sync_dirty(doc: &mut Document) {
-        doc.dirty = doc.editor.as_ref().is_some_and(|e| e.unsaved_file || e.cos.is_modified() || !Arc::ptr_eq(e.cos.bytes(), &e.saved));
+        doc.dirty = doc.crop_review_dirty
+            || doc.editor.as_ref().is_some_and(|e| e.unsaved_file || e.cos.is_modified() || !Arc::ptr_eq(e.cos.bytes(), &e.saved));
+    }
+
+    fn mark_crop_review_dirty(doc: &mut Document) {
+        doc.crop_review_dirty = true;
+        doc.dirty = true;
+        doc.generation += 1;
     }
 
     /// Use the current state's password for viewing (protection edits change it).
@@ -4582,7 +4591,7 @@ impl Session {
         let doc = self.get(id).ok_or(EditError::NoDocument)?;
         let Some(editor) = doc.editor.as_ref() else { return Ok(doc.bytes.clone()) };
         let on_saved = Arc::ptr_eq(editor.cos.bytes(), &editor.saved);
-        if !editor.cos.is_modified() && on_saved && (!editor.cos.reconstructed() || doc.is_signed()) {
+        if !doc.crop_review_dirty && !editor.cos.is_modified() && on_saved && (!editor.cos.reconstructed() || doc.is_signed()) {
             return Ok(editor.saved.clone());
         }
         // What the user removed again before saving (a cleared redaction mark) stays out of the file.
@@ -4660,6 +4669,7 @@ impl Session {
         if let Some(editor) = doc.editor.as_ref() {
             doc.crop_review = embedded_crop_review_store(&editor.cos);
         }
+        doc.crop_review_dirty = false;
         doc.dirty = false;
         doc.generation += 1;
         Self::refresh(doc).inspect_err(|_| Self::show_released(doc))
@@ -5505,15 +5515,32 @@ impl Session {
     }
 
     pub fn upsert_crop_review_item(&mut self, id: DocId, item: export::CropReviewItem) -> Result<(), EditError> {
-        self.doc_mut(id)?.crop_review.upsert(item).map(|_| ()).map_err(EditError::Invalid)
+        let doc = self.doc_mut(id)?;
+        doc.crop_review.upsert(item).map_err(EditError::Invalid)?;
+        Self::mark_crop_review_dirty(doc);
+        Ok(())
     }
 
-    pub fn update_crop_review_metadata(&mut self, id: DocId, crop_id: &str, caption: String, note: Option<String>) -> Result<bool, EditError> {
+    pub fn update_crop_review_metadata(
+        &mut self,
+        id: DocId,
+        crop_id: &str,
+        caption: String,
+        note: Option<String>,
+        ocr_mode: export::CropReviewOcrMode,
+    ) -> Result<bool, EditError> {
         let doc = self.doc_mut(id)?;
         let Some(mut item) = doc.crop_review.get(crop_id).cloned() else { return Ok(false) };
         item.caption = caption;
         item.note = note;
-        doc.crop_review.upsert(item).map(|_| true).map_err(EditError::Invalid)
+        item.ocr_mode = ocr_mode;
+        if !ocr_mode.allows_ocr() {
+            item.ocr_text = None;
+            item.ocr_extracted_at = None;
+        }
+        doc.crop_review.upsert(item).map_err(EditError::Invalid)?;
+        Self::mark_crop_review_dirty(doc);
+        Ok(true)
     }
 
     pub fn delete_crop_review_item(&mut self, id: DocId, crop_id: &str) -> Result<Option<String>, EditError> {
@@ -5522,6 +5549,7 @@ impl Session {
         if doc.crop_review.remove(crop_id).is_none() {
             return Ok(None);
         }
+        Self::mark_crop_review_dirty(doc);
         let next = ordered_ids
             .iter()
             .position(|existing| existing == crop_id)

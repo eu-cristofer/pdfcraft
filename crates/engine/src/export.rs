@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind, Tile};
 use serde::{Deserialize, Serialize};
 
+use crate::js::words_with;
 use crate::{Document, comment_kind};
 
 /// Renders and extracts pages of one document state.
@@ -69,6 +70,21 @@ pub struct SnapshotExportOcr {
     pub text: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CropReviewOcrMode {
+    #[default]
+    Auto,
+    Include,
+    Skip,
+}
+
+impl CropReviewOcrMode {
+    pub fn allows_ocr(self) -> bool {
+        !matches!(self, Self::Skip)
+    }
+}
+
 /// Raw rectangle-driven snapshot export data before canonical ordering, IDs and image paths are assigned.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SnapshotExportItemInput {
@@ -79,6 +95,8 @@ pub struct SnapshotExportItemInput {
     pub metadata: SnapshotExportMetadata,
     /// OCR for this selected portion, when a later caller has already derived it.
     pub ocr: Option<SnapshotExportOcr>,
+    /// Whether missing OCR may be derived later for this item.
+    pub allow_ocr_fill: bool,
 }
 
 /// The export package item kind. v1 only emits snapshots, but later package artifacts consume
@@ -155,6 +173,7 @@ pub struct CropReviewItem {
     pub rect_pdf: CropPdfRect,
     pub caption: String,
     pub note: Option<String>,
+    pub ocr_mode: CropReviewOcrMode,
     pub ocr_text: Option<String>,
     pub ocr_extracted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -193,7 +212,14 @@ impl CropReviewItem {
 
     pub fn export_item_input(&self, order: usize, page: &pdfcraft_render::PageInfo) -> Result<SnapshotExportItemInput, String> {
         self.validate()?;
-        Ok(SnapshotExportItemInput { order, page: self.page_number, rect: self.export_rect(page)?, metadata: self.metadata(), ocr: self.ocr() })
+        Ok(SnapshotExportItemInput {
+            order,
+            page: self.page_number,
+            rect: self.export_rect(page)?,
+            metadata: self.metadata(),
+            ocr: self.ocr(),
+            allow_ocr_fill: self.ocr_mode.allows_ocr(),
+        })
     }
 }
 
@@ -288,6 +314,8 @@ struct CropReviewProjectCropJson {
     rect_pdf: CropReviewProjectRectJson,
     caption: String,
     note: Option<String>,
+    #[serde(default)]
+    ocr_mode: CropReviewOcrMode,
     ocr_text: Option<String>,
     ocr_extracted_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
@@ -369,6 +397,7 @@ impl CropReviewProjectCropJson {
             },
             caption: item.caption.clone(),
             note: item.note.clone(),
+            ocr_mode: item.ocr_mode,
             ocr_text: item.ocr_text.clone(),
             ocr_extracted_at: item.ocr_extracted_at,
             created_at: item.created_at,
@@ -388,6 +417,7 @@ impl CropReviewProjectCropJson {
             rect_pdf: CropPdfRect { left: self.rect_pdf.left, bottom: self.rect_pdf.bottom, right: self.rect_pdf.right, top: self.rect_pdf.top },
             caption: self.caption,
             note: self.note,
+            ocr_mode: self.ocr_mode,
             ocr_text: self.ocr_text,
             ocr_extracted_at: self.ocr_extracted_at,
             created_at: self.created_at,
@@ -409,6 +439,7 @@ impl CropReviewProjectCropJson {
             rect_pdf: CropPdfRect { left: self.rect_pdf.left, bottom: self.rect_pdf.bottom, right: self.rect_pdf.right, top: self.rect_pdf.top },
             caption: self.caption.clone(),
             note: self.note.clone(),
+            ocr_mode: self.ocr_mode,
             ocr_text: self.ocr_text.clone(),
             ocr_extracted_at: self.ocr_extracted_at,
             created_at: self.created_at,
@@ -452,6 +483,8 @@ pub struct SnapshotExportItem {
     pub metadata: SnapshotExportMetadata,
     /// OCR for this selected portion, kept out of `manifest.json` in v1.
     pub ocr: Option<SnapshotExportOcr>,
+    /// Whether missing OCR may be derived later for this item.
+    pub allow_ocr_fill: bool,
 }
 
 /// End-to-end inputs for writing one snapshot export package.
@@ -571,6 +604,7 @@ fn selected_comment_snapshot_export_item_input_from_parts(
         rect: selected_comment_export_rect(page, annotation)?,
         metadata: selected_comment_metadata(annotation)?,
         ocr: None,
+        allow_ocr_fill: true,
     })
 }
 
@@ -691,6 +725,7 @@ pub fn normalize_snapshot_export_items(page_count: usize, items: Vec<SnapshotExp
             image_path,
             metadata: item.metadata,
             ocr: item.ocr,
+            allow_ocr_fill: item.allow_ocr_fill,
         });
     }
     Ok(normalized)
@@ -1485,20 +1520,54 @@ fn render_snapshot_export_item_ocr(
     Ok((!text.is_empty()).then_some(SnapshotExportOcr { text }))
 }
 
+fn snapshot_export_text_bounds_overlap(a: [f32; 4], b: ExportRect) -> bool {
+    let left = a[0].max(b.x);
+    let top = a[1].max(b.y);
+    let right = a[2].min(b.x + b.width);
+    let bottom = a[3].min(b.y + b.height);
+    right > left && bottom > top
+}
+
+fn extract_snapshot_export_item_text(
+    renderer: &mut PageRenderer,
+    source: &ExportSource,
+    item: &SnapshotExportItem,
+) -> Result<Option<SnapshotExportOcr>, String> {
+    validate_snapshot_export_page(source.pages, item.page)?;
+    let page_size = *source.sizes.get(item.page - 1).ok_or_else(|| format!("page {} display size is not available", item.page))?;
+    validate_snapshot_export_rect_on_page(page_size, item.rect)?;
+
+    let rendered = renderer.render(RenderRequest { page: item.page - 1, kind: RequestKind::Text, scale: 1.0, ..Default::default() });
+    let Some(text) = rendered.text else {
+        return Ok(None);
+    };
+
+    let words = words_with(&text, |x, y| [x, y]);
+    let text = words
+        .into_iter()
+        .filter(|(_, rect)| snapshot_export_text_bounds_overlap(*rect, item.rect))
+        .map(|(word, _)| word)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+    Ok((!text.is_empty()).then_some(SnapshotExportOcr { text }))
+}
+
 /// Populates missing OCR slots from the selected portion itself, using the shared OCR engine.
 ///
 /// v1 keeps OCR derived and report-only: callers should run this before package writing so the
 /// report can include the selected portion's OCR text without changing the manifest contract.
 pub fn populate_snapshot_export_ocr(source: &ExportSource, items: &mut [SnapshotExportItem]) -> Result<(), String> {
-    if items.iter().all(|item| item.ocr.is_some()) {
-        return Ok(());
-    }
-    if !crate::ocr::available() {
+    if items.iter().all(|item| item.ocr.is_some() || !item.allow_ocr_fill) {
         return Ok(());
     }
     let mut renderer = PageRenderer::new(source.bytes.clone(), source.config.clone());
-    for item in items.iter_mut().filter(|item| item.ocr.is_none()) {
-        item.ocr = render_snapshot_export_item_ocr(&mut renderer, source, item)?;
+    for item in items.iter_mut().filter(|item| item.ocr.is_none() && item.allow_ocr_fill) {
+        item.ocr = extract_snapshot_export_item_text(&mut renderer, source, item)?;
+        if item.ocr.is_none() && crate::ocr::available() {
+            item.ocr = render_snapshot_export_item_ocr(&mut renderer, source, item)?;
+        }
     }
     Ok(())
 }
@@ -1746,8 +1815,8 @@ mod image_name_tests {
 #[cfg(test)]
 mod snapshot_export_tests {
     use super::{
-        CropPdfRect, CropReviewItem, CropReviewStore, ExportItemKind, ExportRect, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportOcr,
-        normalize_package_relative_path, normalize_snapshot_export_items,
+        CropPdfRect, CropReviewItem, CropReviewOcrMode, CropReviewStore, ExportItemKind, ExportRect, SnapshotExportItemInput, SnapshotExportMetadata,
+        SnapshotExportOcr, normalize_package_relative_path, normalize_snapshot_export_items,
     };
     use chrono::{TimeZone, Utc};
     use pdfcraft_render::PageInfo;
@@ -1763,6 +1832,7 @@ mod snapshot_export_tests {
             rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
             metadata: metadata(caption, None),
             ocr: None,
+            allow_ocr_fill: true,
         }
     }
 
@@ -1782,6 +1852,7 @@ mod snapshot_export_tests {
             rect_pdf,
             caption: format!("caption-{id}"),
             note: Some(format!("note-{id}")),
+            ocr_mode: CropReviewOcrMode::Auto,
             ocr_text: Some(format!("ocr-{id}")),
             ocr_extracted_at: Some(timestamp(9, 15, 0)),
             created_at: timestamp(9, 0, 0),
@@ -1807,6 +1878,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: 12.0, y: 18.0, width: 22.0, height: 28.0 },
                 metadata: metadata("Typed caption", Some("Typed note")),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -1824,6 +1896,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
                 metadata: metadata("Caption", None),
                 ocr: Some(SnapshotExportOcr { text: "derived OCR".into() }),
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -1867,6 +1940,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: -1.0, y: 20.0, width: 30.0, height: 40.0 },
                 metadata: metadata("bad rect", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap_err();
@@ -1880,6 +1954,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: 10.0, y: 20.0, width: 0.0, height: 40.0 },
                 metadata: metadata("bad rect", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap_err();
@@ -1893,6 +1968,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: f32::NAN, y: 20.0, width: 30.0, height: 40.0 },
                 metadata: metadata("bad rect", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap_err();
@@ -1943,6 +2019,7 @@ mod snapshot_export_tests {
             rect_pdf: CropPdfRect::from_user_rect([12.5, 44.0, 90.0, 120.0]).unwrap(),
             caption: "Figure caption".to_owned(),
             note: Some("Reviewer note".to_owned()),
+            ocr_mode: CropReviewOcrMode::Auto,
             ocr_text: Some("Recognized text".to_owned()),
             ocr_extracted_at: Some(timestamp(10, 5, 0)),
             created_at: timestamp(9, 55, 0),
@@ -1960,7 +2037,7 @@ mod snapshot_export_tests {
 
 #[cfg(test)]
 mod crop_review_project_tests {
-    use super::{CropPdfRect, CropReviewItem, ExportItemKind, load_crop_review_project, write_crop_review_project};
+    use super::{CropPdfRect, CropReviewItem, CropReviewOcrMode, ExportItemKind, load_crop_review_project, write_crop_review_project};
     use chrono::{TimeZone, Utc};
     use std::sync::Arc;
 
@@ -2001,6 +2078,7 @@ mod crop_review_project_tests {
             rect_pdf: CropPdfRect { left: 12.5, bottom: 44.0, right: 90.0, top: 120.0 },
             caption: caption.to_owned(),
             note: note.map(str::to_owned),
+            ocr_mode: CropReviewOcrMode::Auto,
             ocr_text: ocr_text.map(str::to_owned),
             ocr_extracted_at: ocr_text.map(|_| timestamp(10, 5, 0)),
             created_at: timestamp(9, 55, 0),
@@ -2088,7 +2166,7 @@ mod export_embedded_crop_review_tests {
 
     use chrono::{TimeZone, Utc};
 
-    use super::{CropPdfRect, CropReviewItem, EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME, ExportItemKind, crop_review_store_json};
+    use super::{CropPdfRect, CropReviewItem, CropReviewOcrMode, EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME, ExportItemKind, crop_review_store_json};
 
     fn timestamp(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 10, 26, hour, minute, second).single().unwrap()
@@ -2102,6 +2180,7 @@ mod export_embedded_crop_review_tests {
             rect_pdf: CropPdfRect { left: 12.5, bottom: 44.0, right: 90.0, top: 120.0 },
             caption: format!("caption-{id}"),
             note: Some(format!("note-{id}")),
+            ocr_mode: CropReviewOcrMode::Auto,
             ocr_text: Some(format!("ocr-{id}")),
             ocr_extracted_at: Some(timestamp(10, 5, 0)),
             created_at: timestamp(9, 55, 0),
@@ -2231,6 +2310,7 @@ mod snapshot_export_artifact_tests {
                     rect: ExportRect { x: 90.5, y: 244.0, width: 180.0, height: 110.0 },
                     metadata: metadata("Comment {callout} _ review", None),
                     ocr: Some(SnapshotExportOcr { text: "Recognized crop text two".into() }),
+                    allow_ocr_fill: true,
                 },
                 SnapshotExportItemInput {
                     order: 10,
@@ -2238,6 +2318,7 @@ mod snapshot_export_artifact_tests {
                     rect: ExportRect { x: 72.0, y: 128.0, width: 216.0, height: 96.0 },
                     metadata: metadata("50% approved & signed #1", Some(r"Path C:\exports\item_{1} uses ~ temp ^ dir and costs $5.")),
                     ocr: Some(SnapshotExportOcr { text: "Recognized crop text one".into() }),
+                    allow_ocr_fill: true,
                 },
             ],
         )
@@ -2381,6 +2462,7 @@ mod snapshot_export_artifact_tests {
                 rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
                 metadata: metadata("Caption", Some("Note text")),
                 ocr: Some(SnapshotExportOcr { text: "Derived OCR text".into() }),
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2512,6 +2594,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
                 metadata: metadata("Black box", Some("One item")),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2554,6 +2637,7 @@ mod snapshot_export_package_tests {
                     rect: ExportRect { x: 90.0, y: 110.0, width: 50.0, height: 40.0 },
                     metadata: metadata("Second page", None),
                     ocr: None,
+                    allow_ocr_fill: true,
                 },
                 SnapshotExportItemInput {
                     order: 10,
@@ -2561,6 +2645,7 @@ mod snapshot_export_package_tests {
                     rect: ExportRect { x: 10.0, y: 30.0, width: 40.0, height: 30.0 },
                     metadata: metadata("First page", Some("ordered first")),
                     ocr: None,
+                    allow_ocr_fill: true,
                 },
             ],
         )
@@ -2601,6 +2686,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
                 metadata: metadata("Black box", Some("One item")),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2631,6 +2717,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 40.0, y: 20.0, width: 30.0, height: 60.0 },
                 metadata: metadata("Rotated red band", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2669,6 +2756,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
                 metadata: metadata("Black box", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2700,6 +2788,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 180.0, y: 30.0, width: 40.0, height: 50.0 },
                 metadata: metadata("Out of bounds", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2723,6 +2812,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 10.0, y: 120.0, width: 110.0, height: 50.0 },
                 metadata: metadata("OCR crop", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2736,6 +2826,48 @@ mod snapshot_export_package_tests {
             assert!(result.is_ok(), "{result:?}");
             assert!(items[0].ocr.is_none());
         }
+    }
+
+    #[test]
+    fn ocr_population_prefers_native_page_text_inside_the_selected_rectangle() {
+        let source = source(&["BT /F1 24 Tf 20 150 Td (Thermal bow result) Tj ET"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let mut items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 15.0, y: 130.0, width: 170.0, height: 30.0 },
+                metadata: metadata("Text crop", None),
+                ocr: None,
+                allow_ocr_fill: true,
+            }],
+        )
+        .unwrap();
+
+        populate_snapshot_export_ocr(&source, &mut items).unwrap();
+
+        assert_eq!(items[0].ocr.as_ref().map(|ocr| ocr.text.as_str()), Some("Thermal bow result"));
+    }
+
+    #[test]
+    fn ocr_population_skips_fill_when_item_disallows_it() {
+        let source = source(&["BT /F1 24 Tf 20 150 Td (Thermal bow result) Tj ET"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let mut items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 15.0, y: 130.0, width: 170.0, height: 30.0 },
+                metadata: metadata("Text crop", None),
+                ocr: None,
+                allow_ocr_fill: false,
+            }],
+        )
+        .unwrap();
+
+        populate_snapshot_export_ocr(&source, &mut items).unwrap();
+
+        assert!(items[0].ocr.is_none());
     }
 }
 

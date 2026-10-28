@@ -5,7 +5,7 @@ use egui::accesskit::Role;
 use egui::{Pos2, Rect, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use pdfcraft_engine::export::{CropPdfRect, CropReviewItem, ExportItemKind};
+use pdfcraft_engine::export::{CropPdfRect, CropReviewItem, CropReviewOcrMode, ExportItemKind};
 use pdfcraft_ui_egui::PdfCraftApp;
 
 use crate::support;
@@ -62,6 +62,7 @@ fn item(id: &str, page_number: usize, rect_pdf: CropPdfRect, caption: &str, seco
         rect_pdf,
         caption: caption.to_string(),
         note: None,
+        ocr_mode: CropReviewOcrMode::Auto,
         ocr_text: None,
         ocr_extracted_at: None,
         created_at: stamp(seconds),
@@ -438,7 +439,7 @@ fn snapshot_tool_still_copies_pixels_and_does_not_open_crop_review_flow() {
     let id = h.state().active_ids().expect("active document").1;
     let doc = h.state().session.get(id).expect("document");
     assert!(doc.crop_review().items().is_empty(), "snapshot did not create crop-review items");
-    assert!(h.state().export_draft.snapshot_package.is_some(), "snapshot kept its export dialog flow");
+    assert!(!matches!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Export(_))), "snapshot stayed copy-only");
 }
 
 #[test]

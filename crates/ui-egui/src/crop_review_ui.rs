@@ -1,7 +1,10 @@
 //! Per-document crop-review UI state.
 
 use egui::{Pos2, Rect};
-use pdfcraft_engine::Document;
+use pdfcraft_engine::{
+    Document,
+    export::CropReviewOcrMode,
+};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct CropReviewView {
@@ -9,6 +12,7 @@ pub(crate) struct CropReviewView {
     pub metadata_for: Option<String>,
     pub metadata_caption: String,
     pub metadata_note: String,
+    pub metadata_ocr_mode: CropReviewOcrMode,
     pub hidden: bool,
     pub creating: bool,
     pub gesture: Option<CropGesture>,
@@ -52,6 +56,7 @@ impl CropReviewView {
         self.metadata_for = None;
         self.metadata_caption.clear();
         self.metadata_note.clear();
+        self.metadata_ocr_mode = CropReviewOcrMode::Auto;
         self.hidden = false;
         self.creating = false;
         self.gesture = None;
@@ -65,5 +70,6 @@ impl CropReviewView {
         self.metadata_for = Some(item.id.clone());
         self.metadata_caption = item.caption.clone();
         self.metadata_note = item.note.clone().unwrap_or_default();
+        self.metadata_ocr_mode = item.ocr_mode;
     }
 }

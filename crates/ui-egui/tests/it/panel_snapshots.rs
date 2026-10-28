@@ -203,6 +203,7 @@ fn open(p: RightPanel) -> (Harness<'static, PdfCraftApp>, &'static str) {
                     rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 24.0, bottom: 120.0, right: 108.0, top: 180.0 },
                     caption: "Desk rectangle".into(),
                     note: Some("Reporter header".into()),
+                    ocr_mode: pdfcraft_engine::export::CropReviewOcrMode::Auto,
                     ocr_text: None,
                     ocr_extracted_at: None,
                     created_at: chrono::Utc.timestamp_opt(10, 0).single().expect("timestamp"),

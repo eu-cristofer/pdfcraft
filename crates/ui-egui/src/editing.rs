@@ -56,7 +56,22 @@ impl PdfCraftApp {
         match self.session.apply(id, edit.clone()) {
             Ok(()) => {
                 let Some(doc) = self.session.get(id) else { return true };
-                let info = &doc.info;
+                let info = doc.info.clone();
+                let generation = doc.edit_generation();
+                let doc_pages_len = doc.info.pages.len();
+                let doc_has_xfa = doc.xfa.is_some();
+                let doc_form = std::sync::Arc::clone(&doc.form);
+                let invalidate_crop_ocr = comment_page(&edit).or_else(|| content_page(&edit)).is_none()
+                    && !(form_before.is_some()
+                        && doc_pages_len == page_count_before
+                        && doc_has_xfa == had_xfa
+                        && !doc_has_xfa
+                        && is_form_edit(&edit));
+                if invalidate_crop_ocr
+                    && let Ok(store) = self.session.crop_review_mut(id)
+                {
+                    Self::invalidate_crop_review_ocr_store(store);
+                }
                 let view = &mut self.views[i];
                 view.applied_editor = None;
                 // A picture picked with the Select tool may be the one this edit removed or moved:
@@ -72,20 +87,20 @@ impl PdfCraftApp {
                     // Only a new drawing waits on its raster; any other edit may remove or move it.
                     view.comments.settling.clear();
                 }
-                view.signature_drag.committed(&edit, doc.edit_generation());
-                view.move_background.committed(&edit, doc.edit_generation());
+                view.signature_drag.committed(&edit, generation);
+                view.move_background.committed(&edit, generation);
                 view.text_background.committed(&edit);
                 if let Some(page) = comment_page(&edit).or_else(|| content_page(&edit)) {
                     // Comment and content edits change one page: keep every other raster.
                     view.page_changed(page);
                 } else if let Some(form_before) = form_before
-                    && doc.info.pages.len() == page_count_before
-                    && doc.xfa.is_some() == had_xfa
-                    && doc.xfa.is_none()
+                    && doc_pages_len == page_count_before
+                    && doc_has_xfa == had_xfa
+                    && !doc_has_xfa
                     && is_form_edit(&edit)
                 {
                     let mut changed_pages = std::collections::BTreeSet::new();
-                    for f in doc.form.iter() {
+                    for f in doc_form.iter() {
                         match form_before.iter().find(|old| old.name == f.name) {
                             Some(old) => {
                                 if old != f {
@@ -119,7 +134,7 @@ impl PdfCraftApp {
                         }
                     }
                     for old in form_before.iter() {
-                        if !doc.form.iter().any(|f| f.name == old.name) {
+                        if !doc_form.iter().any(|f| f.name == old.name) {
                             for w in &old.widgets {
                                 if let Some(p) = w.page {
                                     changed_pages.insert(p);
@@ -131,7 +146,7 @@ impl PdfCraftApp {
                         view.page_changed(page);
                     }
                 } else {
-                    view.document_changed(info);
+                    view.document_changed(&info);
                 }
                 if matches!(edit, Edit::AddAnnotation(_)) {
                     view.comments.comment_added();
@@ -295,9 +310,13 @@ impl PdfCraftApp {
                 self.execute(command);
             }
             Some(crate::canvas::ViewAction::UpsertCropReviewItem(item)) => {
-                if let Some(view) = self.views.get(i)
-                    && self.session.upsert_crop_review_item(view.id, item).is_ok()
-                {}
+                if let Some(view_id) = self.views.get(i).map(|view| view.id) {
+                    let crop_id = item.id.clone();
+                    self.invalidate_crop_review_ocr(view_id, &crop_id);
+                    if self.session.upsert_crop_review_item(view_id, item).is_ok() {
+                        self.queue_crop_review_ocr(view_id, &crop_id);
+                    }
+                }
             }
             Some(crate::canvas::ViewAction::DeleteCropReviewItem(id)) => {
                 if let Some(view) = self.views.get(i) {

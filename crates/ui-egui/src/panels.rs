@@ -1028,8 +1028,11 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     }
     if let Some(edit) = crop_edit {
         match edit {
-            crate::crops_panel::PanelEdit::UpdateMetadata { id: crop_id, caption, note } => {
-                let _ = app.session.update_crop_review_metadata(id, &crop_id, caption, note);
+            crate::crops_panel::PanelEdit::UpdateMetadata { id: crop_id, caption, note, ocr_mode } => {
+                let _ = app.session.update_crop_review_metadata(id, &crop_id, caption, note, ocr_mode);
+                if ocr_mode.allows_ocr() {
+                    app.queue_crop_review_ocr(id, &crop_id);
+                }
             }
             crate::crops_panel::PanelEdit::Delete { id: crop_id } => {
                 let next = app.session.delete_crop_review_item(id, &crop_id).ok().flatten();

@@ -1,7 +1,7 @@
 //! Crop review UI: the Crops panel plus the stored-crop overlay on the page canvas.
 
 use egui::{Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2};
-use pdfcraft_engine::export::CropPdfRect;
+use pdfcraft_engine::export::{CropPdfRect, CropReviewOcrMode};
 use pdfcraft_engine::{
     Document,
     export::{CropReviewItem, ExportItemKind},
@@ -23,7 +23,7 @@ const MIN_SIDE: f32 = 6.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PanelEdit {
-    UpdateMetadata { id: String, caption: String, note: Option<String> },
+    UpdateMetadata { id: String, caption: String, note: Option<String>, ocr_mode: CropReviewOcrMode },
     Delete { id: String },
 }
 
@@ -287,6 +287,35 @@ fn detail(ui: &mut egui::Ui, t: &Tokens, view: &mut DocView, item: &CropReviewIt
             edit = Some(pending_metadata_edit(view, item.id.as_str()));
         }
 
+        ui.horizontal(|ui| {
+            ui.label(tl!("OCR"));
+            egui::ComboBox::from_id_salt(("crop-ocr-mode", item.id.as_str()))
+                .selected_text(match view.crop_review.metadata_ocr_mode {
+                    CropReviewOcrMode::Auto => tl!("Auto"),
+                    CropReviewOcrMode::Include => tl!("Include"),
+                    CropReviewOcrMode::Skip => tl!("Skip"),
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut view.crop_review.metadata_ocr_mode, CropReviewOcrMode::Auto, tl!("Auto"));
+                    ui.selectable_value(&mut view.crop_review.metadata_ocr_mode, CropReviewOcrMode::Include, tl!("Include"));
+                    ui.selectable_value(&mut view.crop_review.metadata_ocr_mode, CropReviewOcrMode::Skip, tl!("Skip"));
+                });
+        });
+        if view.crop_review.metadata_ocr_mode != item.ocr_mode {
+            edit = Some(pending_metadata_edit(view, item.id.as_str()));
+        }
+
+        let ocr_status = if !item.ocr_mode.allows_ocr() {
+            tl!("OCR skipped")
+        } else if item.ocr_text.as_deref().is_some_and(|text| !text.trim().is_empty()) {
+            tl!("OCR ready")
+        } else if pdfcraft_engine::ocr::available() {
+            tl!("OCR pending")
+        } else {
+            tl!("OCR unavailable")
+        };
+        ui.label(egui::RichText::new(ocr_status).font(theme::regular(11.0)).color(t.text_faint));
+
         let rect = item.rect_pdf;
         ui.label(
             egui::RichText::new(crate::i18n::fmt(tl!("Kind: {kind}"), &[("kind", kind_label(item.kind))]))
@@ -424,6 +453,7 @@ fn pending_metadata_edit(view: &DocView, id: &str) -> PanelEdit {
         id: id.to_owned(),
         caption: view.crop_review.metadata_caption.clone(),
         note: Some(view.crop_review.metadata_note.clone()).filter(|text| !text.trim().is_empty()),
+        ocr_mode: view.crop_review.metadata_ocr_mode,
     }
 }
 

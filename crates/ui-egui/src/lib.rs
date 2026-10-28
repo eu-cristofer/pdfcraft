@@ -56,6 +56,7 @@ mod create_multiple_ui;
 mod create_ui;
 mod credits;
 mod crop;
+mod crop_review_ocr;
 mod crop_review_ui;
 mod crops_panel;
 mod drag_pointer;
@@ -842,6 +843,7 @@ pub struct PdfCraftApp {
     pub ocr_draft: ocr_ui::OcrDraft,
     pub ocr_run: Option<ocr_ui::OcrRun>,
     pub ocr_batch: Option<std::sync::Arc<std::sync::Mutex<ocr_ui::BatchProgress>>>,
+    pub crop_review_ocr_run: Option<crop_review_ocr::CropReviewOcrRun>,
     /// Background jobs (OCR, actions, listing pinned folders) run inline instead (tests).
     pub run_inline: bool,
     /// Action Wizard: the user's actions, the dialog state, the running action and (tests) the
@@ -1219,6 +1221,7 @@ impl PdfCraftApp {
             ocr_draft: ocr_ui::OcrDraft::default(),
             ocr_run: None,
             ocr_batch: None,
+            crop_review_ocr_run: None,
             run_inline: false,
             custom_actions: Vec::new(),
             wizard: Default::default(),
@@ -3723,6 +3726,7 @@ impl eframe::App for PdfCraftApp {
             }
         }
         self.poll_export();
+        self.poll_crop_review_ocr();
         self.auto_ocr_scanned_page();
         self.poll_ocr();
         self.poll_optimize();

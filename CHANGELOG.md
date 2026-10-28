@@ -13,6 +13,10 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Restored** the desktop `edit.snapshot` tool to its original copy-only behavior — dragging a snapshot rectangle now copies pixels without opening the package-export dialog, while crop-review package export and the shared headless snapshot package tool remain available on their own paths.
+
+- **Improved** crop-review snapshot export text extraction — export now prefers native PDF text inside the selected rectangle and falls back to bitmap OCR only when that portion has no usable text layer, which fixes poor `ocr_text` / `report.marker.json` output on born-digital papers while keeping scanned-region behavior available.
+
 - **Aligned** crop-review package export across automation, desktop UI, and docs — the automation tools and desktop export dialog now expose optional `report.docx`, derived `report.marker.json`, and explicit package-folder naming consistently, and the desktop crop-review export flow honors the override destination as the parent folder while still creating the named package directory.
 
 - **Refactored** crop-review mutations behind `pdfcraft-engine` session helpers — the desktop crop-review UI now adds, updates, deletes, and project-loads crop items through explicit engine-owned operations instead of mutating the store directly at each call site, while keeping crop selection and project persistence behavior covered by focused regressions.
@@ -25,11 +29,11 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 - **Registered** sprint project `docs/changes/005_export-contract-hardening/` — follow-up plan to document and harden the evolved crop-review export contract: canonical OCR in `manifest.json`, derived AI-oriented `report.marker.json`, optional `report.docx`, clarified external vs embedded crop-review persistence, and a later refactor toward engine-owned crop-review mutations.
 
-- **Integrated** crop-review export across engine, automation, and UI — snapshot packages can now be emitted from the persisted crop-review dataset with canonical crop ordering and the existing OCR rule, while the original `edit.snapshot` marquee flow remains a separate transient copy/export path.
+- **Integrated** crop-review export across engine, automation, and UI — snapshot packages can now be emitted from the persisted crop-review dataset with canonical crop ordering and the existing OCR rule, while the original `edit.snapshot` marquee flow remains a separate transient copy path.
 
 - **Added** crop-review project-folder persistence across engine and UI — `pdfcraft-engine` now writes and reloads self-contained crop-review projects with UTF-8 `project.json` plus copied `source.pdf`, strict schema/path validation, and regression coverage for non-ASCII metadata, while `pdfcraft-ui-egui` can save and reopen those projects back into the Crops/Metadata workspace with overlay state rebuilt faithfully.
 
-- **Added** a dedicated persistent crop-review rectangle tool in `pdfcraft-ui-egui` — the crop workspace now reuses the existing marquee drag mechanics to create stored crop items with stable ids and PDF-space geometry, selects the new crop immediately into the Crops/Metadata flow, and keeps `edit.snapshot` as a separate copy-and-export path with focused UI non-regression coverage.
+- **Added** a dedicated persistent crop-review rectangle tool in `pdfcraft-ui-egui` — the crop workspace now reuses the existing marquee drag mechanics to create stored crop items with stable ids and PDF-space geometry, selects the new crop immediately into the Crops/Metadata flow, and keeps `edit.snapshot` as a separate copy-only path with focused UI non-regression coverage.
 
 - **Added** crop-review metadata and synchronized selection in `pdfcraft-ui-egui` — stored crop rectangles now paint as page overlays, clicks on either the page overlay or the Crops panel drive one selected-crop path, and a dedicated `Metadata` right-side panel edits `caption` and `note` in place with focused UI coverage for both selection directions and stable metadata updates.
 
