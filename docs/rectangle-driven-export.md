@@ -179,25 +179,25 @@ OCR is not:
 - a second independently chosen rectangle
 - a generic transcript system for the entire package
 
-### 6. OCR placement in the package for v1
+### 6. OCR placement in the package for v1.1
 
-v1 keeps `manifest.json` canonical and unchanged for rectangle metadata.
+v1.1 keeps `manifest.json` canonical and extends it with optional per-item `ocr_text`.
 
-For v1, OCR text is derived into `report.tex` from the selected portion.
+For v1.1, OCR text is canonical package context and derived outputs consume it from the same ordered item list.
 
-It is not introduced as:
+It is still not introduced as:
 
-- a new canonical manifest field
 - a sidecar `ocr/` directory
 - per-item text files beside the PNGs
 - a generic package-wide text database
 
 This is deliberate scope control for Sprint 1:
 
-- the package contract remains anchored on the existing manifest and figure-oriented report structure
-- OCR is part of the shipped rectangle-driven flow, but in v1 it remains a derived reporting layer rather than a new canonical manifest schema
+- the package contract remains anchored on one canonical manifest
+- OCR is now canonical machine-readable package context
+- `report.tex`, `report.docx`, and `report.marker.json` remain derived artifacts
 
-If a later project needs canonical machine-readable OCR data in the package, that must be a separate explicit versioned contract change.
+This is an explicit versioned contract change from the earlier v1 direction.
 
 ### 7. Minimal LaTeX structure that remains in scope
 
@@ -205,24 +205,25 @@ If a later project needs canonical machine-readable OCR data in the package, tha
 
 The existing snapshot export structure remains the starting point.
 
-The allowed v1 shape is:
+The allowed v1.1 shape is:
 
-- an optional top-level heading such as `\section*{Snapshot Evidence}`
-- one figure block per manifest item, in manifest order
-- for each figure:
-  - `\centering`
-  - `\includegraphics[width=\linewidth]{<image.path>}`
-  - `\caption{<escaped manifest caption>}`
+- a minimal `pdflatex`-compilable file
+- one `enumerate` item per manifest item, in manifest order
+- for each item:
+  - `\item Conforme a Figura~\ref{fig:<id>}, <escaped note or fallback text>.`
+  - one `\noindent\begin{minipage}[t]{\linewidth}` block
+  - `\fbox{\includegraphics[width=\linewidth]{<image.path>}}`
+  - `\captionsetup{justification=centering}`
+  - `\captionof{figure}{<escaped manifest caption>}`
   - `\label{fig:<id>}`
-- if `note` is present, one plain-text `\paragraph{Note.}` block after that figure
-- if OCR text is present, one plain-text `\paragraph{OCR.}` block after that figure's note block, or directly after the figure when no note exists
+- if OCR text is present, one plain-text `\noindent OCR.: ...` line after that item's minipage block
 
 Required rules:
 
-- figure order MUST match `manifest.items`
+- item order MUST match `manifest.items`
 - labels MUST remain derived from item IDs only
 - note text MUST come from the manifest `note` field only
-- OCR text MUST come from OCR of the same selected portion only
+- OCR text MUST come from `manifest.items[*].ocr_text` for the same selected portion only
 - all user-authored and OCR text MUST be emitted as escaped plain text
 
 ### 8. What remains out of scope for LaTeX

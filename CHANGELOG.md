@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Aligned** crop-review package export across automation, desktop UI, and docs — the automation tools and desktop export dialog now expose optional `report.docx`, derived `report.marker.json`, and explicit package-folder naming consistently, and the desktop crop-review export flow honors the override destination as the parent folder while still creating the named package directory.
+
 - **Refactored** crop-review mutations behind `pdfcraft-engine` session helpers — the desktop crop-review UI now adds, updates, deletes, and project-loads crop items through explicit engine-owned operations instead of mutating the store directly at each call site, while keeping crop selection and project persistence behavior covered by focused regressions.
 
 - **Hardened** embedded crop-review persistence in `pdfcraft-engine` — focused export-path regressions now cover restoring the reserved `pdfcraft-crop-review.json` attachment on open, preserving it through save/reopen, removing it when the crop store becomes empty, and leaving unchanged documents without crop review free of the reserved attachment.

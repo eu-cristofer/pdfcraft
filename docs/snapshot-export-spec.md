@@ -4,10 +4,10 @@ Last reviewed: 2026-10-25
 
 ## Status
 
-This document defines the PdfCraft snapshot export package contract for v1.
+This document defines the PdfCraft snapshot export package contract for v1.1.
 
 `manifest.json` is the canonical contract.
-All other package files, including `report.tex`, are derived artifacts.
+All other package files, including `report.tex`, `report.docx`, and `report.marker.json`, are derived artifacts.
 
 ## Scope
 
@@ -24,15 +24,16 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHOULD", and "MAY" are to be inte
 
 ## Package contents
 
-A valid v1 package MUST contain exactly these required artifacts:
+A valid v1.1 package MUST contain exactly these required artifacts:
 
 - `manifest.json`
 - `source.pdf`
 - `report.tex`
+- `report.marker.json`
 - `evidence/`
 - one PNG file per manifest item at `evidence/<id>.png`
 
-A package MAY contain additional non-canonical convenience files in later versions, but v1 exporters SHOULD keep the package minimal and MUST NOT require any file other than the ones listed above.
+A package MAY contain additional non-canonical convenience files. In v1.1, `report.docx` is an optional derived artifact. Exporters MUST NOT require any file other than the required ones listed above.
 
 The package root layout for v1 is:
 
@@ -41,6 +42,8 @@ The package root layout for v1 is:
   manifest.json
   source.pdf
   report.tex
+  report.marker.json
+  report.docx            # optional
   evidence/
     item_1.png
     item_2.png
@@ -50,7 +53,7 @@ The package root layout for v1 is:
 ## Canonical artifact rules
 
 - `manifest.json` is the only canonical description of exported evidence.
-- `report.tex` MUST be generated from `manifest.json` and MUST NOT introduce its own ordering, IDs, or evidence data not present in the manifest.
+- `report.tex`, `report.docx`, and `report.marker.json` MUST be generated from `manifest.json` and MUST NOT introduce their own ordering, IDs, or contradictory evidence data.
 - `source.pdf` MUST represent the working file bytes for the exported document state, including unsaved edits that are part of that state.
 - Snapshot PNGs are derived renderings and MAY reflect display-only appearance generation needed to match on-screen rendering.
 - If any derived artifact disagrees with `manifest.json`, the manifest is authoritative and the package is invalid.
@@ -59,10 +62,10 @@ The package root layout for v1 is:
 
 The top-level manifest field `manifest_version` MUST be a string.
 
-v1 uses:
+v1.1 uses:
 
 ```json
-"manifest_version": "1.0"
+"manifest_version": "1.1"
 ```
 
 Versioning rules:
@@ -71,7 +74,7 @@ Versioning rules:
 - A change that changes required semantics, removes fields, changes coordinate meaning, or adds new required behavior is a major version change.
 - v1 consumers MUST reject manifests whose major version is not `1`.
 - v1 consumers MAY reject a higher minor version if they cannot safely ignore newly added fields.
-- v1 exporters MUST emit `1.0`.
+- v1.1 exporters MUST emit `1.1`.
 
 ## Deterministic package rules
 
@@ -137,12 +140,12 @@ Consumers MUST treat JSON object member order as non-semantic.
 
 ### Top-level fields
 
-A v1 manifest MUST contain these top-level fields:
+A v1.1 manifest MUST contain these top-level fields:
 
 ```json
 {
   "package_kind": "pdfcraft.snapshot_export",
-  "manifest_version": "1.0",
+  "manifest_version": "1.1",
   "source_pdf": {
     "path": "source.pdf",
     "state": "working-copy"
@@ -165,7 +168,7 @@ A v1 manifest MUST contain these top-level fields:
 Field rules:
 
 - `package_kind`: REQUIRED. MUST be the exact string `pdfcraft.snapshot_export`.
-- `manifest_version`: REQUIRED. MUST be the exact string `1.0`.
+- `manifest_version`: REQUIRED. MUST be the exact string `1.1`.
 - `source_pdf`: REQUIRED. Describes the semantic meaning of `source.pdf`.
 - `coordinate_space`: REQUIRED. Declares the fixed coordinate contract for all item rectangles in the package.
 - `rendering`: REQUIRED. Declares the fixed rendering contract for all snapshot images in the package.
@@ -216,7 +219,7 @@ Their meaning is:
 
 ## Item schema
 
-Each entry in `items` MUST be an object with these fields in v1:
+Each entry in `items` MUST be an object with these fields in v1.1:
 
 ```json
 {
@@ -235,7 +238,8 @@ Each entry in `items` MUST be an object with these fields in v1:
     "height_px": 240
   },
   "caption": "Short plain-text caption",
-  "note": "Optional plain-text note."
+  "note": "Optional plain-text note.",
+  "ocr_text": "Optional machine-readable OCR text for the same selected portion."
 }
 ```
 
@@ -248,6 +252,7 @@ Field rules:
 - `image`: REQUIRED. Points to the rendered evidence PNG for this item.
 - `caption`: REQUIRED. Plain-text caption.
 - `note`: OPTIONAL. Plain-text explanatory note. If present, it MUST be a string.
+- `ocr_text`: OPTIONAL. Plain-text OCR of the same selected portion. If present, it MUST be a string.
 
 ### `rect`
 
@@ -361,11 +366,11 @@ If a chosen LaTeX pipeline cannot represent exported plain text safely, the expo
 
 ## Validation rules
 
-A v1 package is valid only if all of the following are true:
+A v1.1 package is valid only if all of the following are true:
 
 - `manifest.json` parses as JSON.
 - `package_kind` is exactly `pdfcraft.snapshot_export`.
-- `manifest_version` is exactly `1.0`.
+- `manifest_version` is exactly `1.1`.
 - `source_pdf.path` is exactly `source.pdf`.
 - `source_pdf.state` is exactly `working-copy`.
 - `coordinate_space` matches the fixed v1 contract exactly.
@@ -381,7 +386,9 @@ A v1 package is valid only if all of the following are true:
 - every referenced image file is a PNG
 - every image's actual pixel size matches `width_px` and `height_px`
 - `report.tex` exists
-- `report.tex` figure order, labels, and image references are derivable from the manifest without contradiction
+- `report.marker.json` exists
+- optional `report.docx`, when written, is derivable from the same manifest items
+- `report.tex` item order, labels, and image references are derivable from the manifest without contradiction
 - `source.pdf` exists
 
 Consumers MAY perform stricter checks, but they MUST NOT reinterpret invalid data as valid by guessing missing semantics.
@@ -438,7 +445,7 @@ case-export/
 ```json
 {
   "package_kind": "pdfcraft.snapshot_export",
-  "manifest_version": "1.0",
+  "manifest_version": "1.1",
   "source_pdf": {
     "path": "source.pdf",
     "state": "working-copy"
@@ -471,7 +478,8 @@ case-export/
         "height_px": 192
       },
       "caption": "Signature block on page 2",
-      "note": "Signer name is present, but the signature field is still empty."
+      "note": "Signer name is present, but the signature field is still empty.",
+      "ocr_text": "John Smith"
     },
     {
       "id": "item_2",
@@ -489,7 +497,8 @@ case-export/
         "height_px": 220
       },
       "caption": "Comment callout near revised paragraph",
-      "note": "Rendered from display-equivalent state so the comment appearance matches what the user saw at export time."
+      "note": "Rendered from display-equivalent state so the comment appearance matches what the user saw at export time.",
+      "ocr_text": "Revised paragraph text"
     },
     {
       "id": "item_3",
@@ -507,7 +516,8 @@ case-export/
         "height_px": 288
       },
       "caption": "Highlighted total amount in payment summary",
-      "note": "Coordinates use top-left origin on the displayed page after rotation has already been applied."
+      "note": "Coordinates use top-left origin on the displayed page after rotation has already been applied.",
+      "ocr_text": "$ 18,540.00"
     }
   ]
 }
@@ -516,27 +526,31 @@ case-export/
 ### Example `report.tex` snippet
 
 ```tex
-\section*{Snapshot Evidence}
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{csquotes}
+\begin{document}
 
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=\linewidth]{evidence/item_1.png}
-\caption{Signature block on page 2}
-\label{fig:item_1}
-\end{figure}
+\begin{enumerate}
+    \item Conforme a Figura~\ref{fig:item_1}, Signer name is present, but the signature field is still empty.
 
-\paragraph{Note.}
-Signer name is present, but the signature field is still empty.
+\noindent\begin{minipage}[t]{\linewidth}
+    \vspace{0pt}
+    \centering
+    \fbox{\includegraphics[width=\linewidth]{evidence/item_1.png}}
+    \captionsetup{justification=centering}
+    \captionof{figure}{Signature block on page 2}
+    \label{fig:item_1}
+\end{minipage}
 
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=\linewidth]{evidence/item_2.png}
-\caption{Comment callout near revised paragraph}
-\label{fig:item_2}
-\end{figure}
+\noindent OCR.: John Smith
 
-\paragraph{Note.}
-Rendered from display-equivalent state so the comment appearance matches what the user saw at export time.
+\end{enumerate}
+
+\end{document}
 ```
 
 ## Summary

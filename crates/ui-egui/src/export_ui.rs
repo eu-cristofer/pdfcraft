@@ -93,10 +93,6 @@ fn snapshot_package_target(dir: &Path, stem: &str) -> PathBuf {
     dir.join(format!("{stem}_snapshot_package"))
 }
 
-fn crop_review_package_target(dir: &Path, stem: &str) -> PathBuf {
-    dir.join(format!("{stem}_crop_review_package"))
-}
-
 fn suggested_crop_review_package_dir_name(stem: &str) -> String {
     format!("{stem}_crop_review_package")
 }
@@ -128,6 +124,10 @@ fn typed_package_dir_name(name: &str) -> Result<String, String> {
         return Err("Package folder name must not contain path separators.".into());
     }
     Ok(name.to_string())
+}
+
+fn crop_review_export_parent_dir(app: &PdfCraftApp) -> Result<PathBuf, String> {
+    app.export_dir_override.clone().map(PathBuf::from).map_or_else(|| typed_export_dir(&app.export_draft.destination_dir), Ok)
 }
 
 fn snapshot_body(ui: &mut egui::Ui, t: &Tokens, draft: &mut SnapshotPackageDraft) -> (bool, bool) {
@@ -228,7 +228,7 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: E
         let label = ui.label(tl!("Package folder name"));
         ui.add(widgets::line(&mut app.export_draft.package_dir_name).desired_width(320.0)).labelled_by(label.id);
         ui.add_space(6.0);
-        let final_folder = match (typed_export_dir(&app.export_draft.destination_dir), typed_package_dir_name(&app.export_draft.package_dir_name)) {
+        let final_folder = match (crop_review_export_parent_dir(app), typed_package_dir_name(&app.export_draft.package_dir_name)) {
             (Ok(dir), Ok(name)) => dir.join(name).display().to_string(),
             (Ok(dir), Err(_)) => dir.join(app.export_draft.package_dir_name.trim()).display().to_string(),
             _ => {
@@ -247,9 +247,7 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: E
         ui.add_space(12.0);
         let (mut apply, mut cancel) = (false, false);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let ok = count > 0
-                && typed_export_dir(&app.export_draft.destination_dir).is_ok()
-                && typed_package_dir_name(&app.export_draft.package_dir_name).is_ok();
+            let ok = count > 0 && crop_review_export_parent_dir(app).is_ok() && typed_package_dir_name(&app.export_draft.package_dir_name).is_ok();
             if ui.add_enabled_ui(ok, |ui| widgets::pill_button(ui, tl!("Export"), true)).inner.clicked() {
                 apply = true;
             }
@@ -488,7 +486,7 @@ fn run_snapshot_package_export(
     set(1, Some(msg));
 }
 
-fn run_crop_review_package_export(input: SnapshotExportPackageInput, stem: String, dir: PathBuf, status: &ExportStatus, lang: crate::i18n::Lang) {
+fn run_crop_review_package_export(input: SnapshotExportPackageInput, target: PathBuf, status: &ExportStatus, lang: crate::i18n::Lang) {
     crate::i18n::set_current(lang);
     let total = input.items.len();
     let set = |done: usize, msg: Option<String>| {
@@ -498,7 +496,6 @@ fn run_crop_review_package_export(input: SnapshotExportPackageInput, stem: Strin
     };
 
     set(0, None);
-    let target = crop_review_package_target(&dir, &stem);
     let shown = target.display().to_string();
     let msg = match write_snapshot_export_package(&target, input) {
         Ok(()) => crate::i18n::fmt(tl!("Exported crop review package to {dir}"), &[("dir", &shown)]),
@@ -556,7 +553,7 @@ impl PdfCraftApp {
             return;
         }
         if kind == ExportKind::CropReviewPackage {
-            let input = match doc.crop_review_snapshot_export_package_input() {
+            let mut input = match doc.crop_review_snapshot_export_package_input() {
                 Ok(mut input) => {
                     input.include_word_report = self.export_draft.include_word_report;
                     input
@@ -566,13 +563,17 @@ impl PdfCraftApp {
                     return;
                 }
             };
+            if let Err(e) = populate_snapshot_export_ocr(&input.render_source, &mut input.items) {
+                self.notify_fmt("Export stopped: {e}", &[("e", &e)]);
+                return;
+            }
             let status: ExportStatus = Arc::new(Mutex::new(Some((0, input.items.len(), None))));
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let start = move |app: &mut Self, dir: PathBuf, inline: bool| {
+                let start = move |app: &mut Self, target: PathBuf, inline: bool| {
                     let st = status.clone();
                     let lang = crate::i18n::current();
-                    let work = move || run_crop_review_package_export(input, stem, dir, &st, lang);
+                    let work = move || run_crop_review_package_export(input, target, &st, lang);
                     if inline {
                         work();
                     } else {
@@ -580,14 +581,10 @@ impl PdfCraftApp {
                     }
                     app.export_status = Some(status);
                 };
-                if let Some(d) = self.export_dir_override.clone() {
-                    start(self, d.into(), true);
-                } else {
-                    match (typed_export_dir(&self.export_draft.destination_dir), typed_package_dir_name(&self.export_draft.package_dir_name)) {
-                        (Ok(dir), Ok(name)) => start(self, dir.join(name), true),
-                        (Err(e), _) => self.notify(e),
-                        (_, Err(e)) => self.notify(e),
-                    }
+                match (crop_review_export_parent_dir(self), typed_package_dir_name(&self.export_draft.package_dir_name)) {
+                    (Ok(dir), Ok(name)) => start(self, dir.join(name), true),
+                    (Err(e), _) => self.notify(e),
+                    (_, Err(e)) => self.notify(e),
                 }
             }
             #[cfg(target_arch = "wasm32")]

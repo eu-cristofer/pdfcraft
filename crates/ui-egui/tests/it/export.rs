@@ -103,11 +103,6 @@ fn snapshot_marquee_opens_package_export_and_writes_engine_package() {
     h.get_by_label("Export").click();
     h.run_steps(6);
 
-    if !pdfcraft_engine::ocr::available() {
-        assert!(!dir.join("doc_snapshot_package").exists());
-        return;
-    }
-
     let package = dir.join("doc_snapshot_package");
     assert!(package.is_dir());
     assert!(package.join("manifest.json").is_file());
@@ -123,8 +118,13 @@ fn snapshot_marquee_opens_package_export_and_writes_engine_package() {
     assert!(report.contains("\\label{fig:item_1}"));
     assert!(report.contains("Desk rectangle"));
     if pdfcraft_engine::ocr::available() {
-        assert!(report.contains("\\paragraph{OCR.}"), "{report}");
+        assert!(report.contains("\\noindent OCR.:"), "{report}");
+    } else {
+        assert!(!report.contains("\\noindent OCR.:"), "{report}");
     }
+    let marker: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(package.join("report.marker.json")).unwrap()).unwrap();
+    assert_eq!(marker["items"][0]["caption"], "Desk rectangle");
+    assert_eq!(marker["items"][0]["ocr_text"].is_string(), pdfcraft_engine::ocr::available());
 }
 
 #[test]
@@ -179,10 +179,13 @@ fn crop_review_export_uses_stored_items_not_a_transient_marquee() {
     assert_eq!(manifest["items"][1]["caption"], "Second stored crop");
     let report = std::fs::read_to_string(package.join("report.tex")).unwrap();
     if pdfcraft_engine::ocr::available() {
-        assert!(report.contains("\\paragraph{OCR.}"), "{report}");
+        assert!(report.contains("\\noindent OCR.:"), "{report}");
     } else {
-        assert!(!report.contains("\\paragraph{OCR.}"), "{report}");
+        assert!(!report.contains("\\noindent OCR.:"), "{report}");
     }
+    let marker: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(package.join("report.marker.json")).unwrap()).unwrap();
+    assert_eq!(marker["items"][0]["caption"], "First stored crop");
+    assert_eq!(marker["items"][0]["ocr_text"].is_string(), pdfcraft_engine::ocr::available());
     let docx = std::fs::read(package.join("report.docx")).unwrap();
     assert!(docx.windows(b"word/document.xml".len()).any(|w| w == b"word/document.xml"));
 }
