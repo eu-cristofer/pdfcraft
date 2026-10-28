@@ -24,6 +24,6 @@ Status: active
 
 - [x] [Sprint 1 — Document export contract 1.1 and AI artifacts](./sprint-1.md) — done 2026-10-28
 - [x] [Sprint 2 — Document crop-review persistence shapes and invariants](./sprint-2.md) — done 2026-10-28
-- [ ] [Sprint 3 — Engine hardening for embedded crop-review persistence](./sprint-3.md)
+- [x] [Sprint 3 — Engine hardening for embedded crop-review persistence](./sprint-3.md) — done 2026-10-28
 - [ ] [Sprint 4 — Formalize crop-review mutations at the engine boundary](./sprint-4.md)
 - [ ] [Sprint 5 — UI, automation, and docs parity sweep](./sprint-5.md)

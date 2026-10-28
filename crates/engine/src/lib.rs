@@ -1000,6 +1000,63 @@ fn info_fields<'a>(info: &'a mut DocInfo, cos: &pdfcraft_cos::Document) -> [(&'a
     ]
 }
 
+fn embedded_crop_review_store(cos: &pdfcraft_cos::Document) -> export::CropReviewStore {
+    let Some(root) = cos.root().and_then(|r| cos.get(r).as_dict().cloned()) else { return export::CropReviewStore::new() };
+    let Some(names_obj) = root.get(b"Names").map(|n| cos.resolve(n)) else {
+        return export::CropReviewStore::new();
+    };
+    let Some(names) = names_obj.as_dict().cloned() else {
+        return export::CropReviewStore::new();
+    };
+    let Some(tree) = names.get(b"EmbeddedFiles").cloned() else { return export::CropReviewStore::new() };
+    let Some(spec) = embedded_file_spec(cos, &tree, export::EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME) else {
+        return export::CropReviewStore::new();
+    };
+    let Some(spec) = cos.resolve(&spec).as_dict().cloned() else { return export::CropReviewStore::new() };
+    let Some(ef) = spec.get(b"EF").and_then(pdfcraft_cos::Object::as_dict) else { return export::CropReviewStore::new() };
+    let Some(stream_ref) = ef.get(b"F").and_then(pdfcraft_cos::Object::as_ref) else { return export::CropReviewStore::new() };
+    let pdfcraft_cos::Object::Stream(stream) = &*cos.get(stream_ref) else { return export::CropReviewStore::new() };
+    let Ok(decoded) = stream.decoded() else { return export::CropReviewStore::new() };
+    let Ok(text) = String::from_utf8(decoded) else { return export::CropReviewStore::new() };
+    export::crop_review_store_from_json(&text).unwrap_or_default()
+}
+
+fn embedded_file_spec(cos: &pdfcraft_cos::Document, node: &pdfcraft_cos::Object, name: &str) -> Option<pdfcraft_cos::Object> {
+    let binding = cos.resolve(node);
+    let dict = binding.as_dict()?;
+    if let Some(names) = dict.get(b"Names").and_then(pdfcraft_cos::Object::as_array) {
+        for pair in names.chunks_exact(2) {
+            if pair[0].as_string().is_some_and(|s| s.to_text() == name) {
+                return Some(pair[1].clone());
+            }
+        }
+    }
+    dict.get(b"Kids").and_then(pdfcraft_cos::Object::as_array).and_then(|kids| kids.iter().find_map(|kid| embedded_file_spec(cos, kid, name)))
+}
+
+fn sync_embedded_crop_review(cos: &mut pdfcraft_cos::Document, crops: &export::CropReviewStore, date: Option<&str>) -> Result<(), EditError> {
+    let existing = pdfcraft_organize::attachment_keys(cos).into_iter().find(|key| key == export::EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME);
+    if crops.items().is_empty() {
+        if let Some(key) = existing {
+            pdfcraft_organize::delete_attachment(cos, &key)?;
+        }
+        return Ok(());
+    }
+    let json = export::crop_review_store_json(crops.items()).map_err(EditError::Invalid)?;
+    if let Some(key) = existing {
+        pdfcraft_organize::delete_attachment(cos, &key)?;
+    }
+    pdfcraft_organize::add_attachment(
+        cos,
+        export::EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME,
+        json.as_bytes(),
+        Some("PdfCraft embedded crop review workspace"),
+        pdfcraft_organize::mime_for_name(export::EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME),
+        date,
+    )?;
+    Ok(())
+}
+
 /// The copy PDFCraft displays when opening `bytes`: with appearances drawn, in memory only, for
 /// comments that have none and form fields the file leaves to the viewer. Render paths outside the app, such as the CLI, use this so their page
 /// images agree with the app and independent viewers. It never changes the source document, and an
@@ -3900,6 +3957,10 @@ impl Session {
         xfa: Option<XfaLayout>,
     ) -> Document {
         let config = RenderConfig { password: render_password.as_deref().map(Arc::from), ..Default::default() };
+        let embedded_crops = match &cos {
+            Ok(Ok(cos)) => embedded_crop_review_store(cos),
+            _ => export::CropReviewStore::new(),
+        };
         let (mut editor, read_only_reason) = match cos {
             Ok(Ok(cos)) => {
                 let keys = Keys { render: render_password.clone(), reopen: password.map(str::to_owned) };
@@ -3983,7 +4044,7 @@ impl Session {
             fonts_stale: false,
             xfa_warnings: Vec::new(),
             edit_notices: Vec::new(),
-            crop_review: export::CropReviewStore::new(),
+            crop_review: embedded_crops,
         }
     }
 
@@ -4490,6 +4551,7 @@ impl Session {
                 *field = value;
             }
         }
+        doc.crop_review = embedded_crop_review_store(&editor.cos);
         doc.info = info;
         doc.fonts_stale = false;
         let mut form = pdfcraft_forms::fields(&editor.cos);
@@ -4529,7 +4591,9 @@ impl Session {
         // file so that revision stays in the chain. A full rewrite (redaction, new encryption,
         // a reconstructed file) still writes the current graph on its own.
         let rewrite = editor.cos.full_save_required() || editor.cos.encryption_changed() || editor.cos.revisions().is_empty();
-        let cos = writable(&editor.cos)?;
+        let mut cos = writable(&editor.cos)?.into_owned();
+        let date = self.now().map(pdfcraft_cos::pdf_date);
+        sync_embedded_crop_review(&mut cos, &doc.crop_review, date.as_deref())?;
         guard(|| {
             if on_saved || rewrite {
                 write_incremental(&cos, &opts)
@@ -4552,7 +4616,9 @@ impl Session {
         }
         let editor = doc.editor.as_ref().ok_or_else(|| EditError::ReadOnly(doc.read_only_reason.clone().unwrap_or_default()))?;
         let opts = SaveOptions { mod_date: self.now().map(pdfcraft_cos::pdf_date), ..SaveOptions::default() };
-        let cos = writable(&editor.cos)?;
+        let mut cos = writable(&editor.cos)?.into_owned();
+        let date = self.now().map(pdfcraft_cos::pdf_date);
+        sync_embedded_crop_review(&mut cos, &doc.crop_review, date.as_deref())?;
         guard(|| write_full(&cos, &opts)).map_err(EditError::Write)?.map(Arc::new).map_err(|e| EditError::Write(e.to_string()))
     }
 
@@ -4590,6 +4656,9 @@ impl Session {
         if let Some(p) = path {
             doc.name = std::path::Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.clone());
             doc.path = Some(p);
+        }
+        if let Some(editor) = doc.editor.as_ref() {
+            doc.crop_review = embedded_crop_review_store(&editor.cos);
         }
         doc.dirty = false;
         doc.generation += 1;

@@ -64,8 +64,6 @@ pub struct SnapshotExportMetadata {
 }
 
 /// OCR derived from the same selected portion as the snapshot rectangle.
-///
-/// v1 keeps this seam in the engine model without making it canonical manifest data yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotExportOcr {
     pub text: String,
@@ -325,6 +323,36 @@ impl CropReviewProjectJson {
         }
         Ok(())
     }
+}
+
+pub const EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME: &str = "pdfcraft-crop-review.json";
+
+pub fn crop_review_store_json(crops: &[CropReviewItem]) -> Result<String, String> {
+    let project = CropReviewProject { source_pdf_bytes: Arc::new(Vec::new()), crops: crops.to_vec() };
+    let json = CropReviewProjectJson {
+        schema_version: CROP_REVIEW_PROJECT_SCHEMA_VERSION,
+        source_pdf: String::new(),
+        crops: project.crops.iter().map(CropReviewProjectCropJson::from_item).collect(),
+    };
+    serde_json::to_string_pretty(&json)
+        .map(|mut out| {
+            out.push('\n');
+            out
+        })
+        .map_err(|e| format!("failed to serialize crop review JSON: {e}"))
+}
+
+pub fn crop_review_store_from_json(json_text: &str) -> Result<CropReviewStore, String> {
+    let json: CropReviewProjectJson = serde_json::from_str(json_text).map_err(|e| format!("crop review JSON is not valid: {e}"))?;
+    if json.schema_version != CROP_REVIEW_PROJECT_SCHEMA_VERSION {
+        return Err(format!("crop review schema version {} is not supported", json.schema_version));
+    }
+    let mut store = CropReviewStore::new();
+    for crop in json.crops {
+        let item = crop.into_item()?;
+        store.upsert(item)?;
+    }
+    Ok(store)
 }
 
 impl CropReviewProjectCropJson {
@@ -669,10 +697,11 @@ pub fn normalize_snapshot_export_items(page_count: usize, items: Vec<SnapshotExp
 }
 
 const SNAPSHOT_EXPORT_PACKAGE_KIND: &str = "pdfcraft.snapshot_export";
-const SNAPSHOT_EXPORT_MANIFEST_VERSION: &str = "1.0";
+const SNAPSHOT_EXPORT_MANIFEST_VERSION: &str = "1.1";
 const SNAPSHOT_EXPORT_MANIFEST_PATH: &str = "manifest.json";
 const SNAPSHOT_EXPORT_REPORT_PATH: &str = "report.tex";
 const SNAPSHOT_EXPORT_REPORT_DOCX_PATH: &str = "report.docx";
+const SNAPSHOT_EXPORT_MARKER_PATH: &str = "report.marker.json";
 const SNAPSHOT_EXPORT_EVIDENCE_DIR: &str = "evidence";
 const SNAPSHOT_EXPORT_SOURCE_PDF_PATH: &str = "source.pdf";
 const SNAPSHOT_EXPORT_SOURCE_PDF_STATE: &str = "working-copy";
@@ -880,10 +909,13 @@ pub fn snapshot_export_manifest_json(items: &[SnapshotExportItem]) -> Result<Str
             out.push_str(",\n");
             out.push_str("      \"note\": ");
             out.push_str(&json_string(note)?);
-            out.push('\n');
-        } else {
-            out.push('\n');
         }
+        if let Some(ocr) = item.ocr.as_ref() {
+            out.push_str(",\n");
+            out.push_str("      \"ocr_text\": ");
+            out.push_str(&json_string(&ocr.text)?);
+        }
+        out.push('\n');
         out.push_str("    }");
         if index + 1 != item_count {
             out.push(',');
@@ -932,6 +964,35 @@ pub fn snapshot_export_report_tex(items: &[SnapshotExportItem]) -> Result<String
     out.push_str("\\end{enumerate}\n\n\\end{document}\n");
 
     Ok(out)
+}
+
+/// Renders a machine-readable report for AI pipelines from the canonical ordered item list.
+pub fn snapshot_export_marker_json(items: &[SnapshotExportItem]) -> Result<String, String> {
+    validate_snapshot_export_contract_items(items)?;
+    let value = serde_json::json!({
+        "package_kind": SNAPSHOT_EXPORT_PACKAGE_KIND,
+        "manifest_version": SNAPSHOT_EXPORT_MANIFEST_VERSION,
+        "items": items
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "id": item.id,
+                    "kind": item.kind.as_str(),
+                    "page": item.page,
+                    "image_path": item.image_path,
+                    "caption": item.metadata.caption,
+                    "note": item.metadata.note,
+                    "ocr_text": item.ocr.as_ref().map(|ocr| ocr.text.clone()),
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    serde_json::to_string_pretty(&value)
+        .map(|mut out| {
+            out.push('\n');
+            out
+        })
+        .map_err(|e| format!("failed to serialize snapshot export marker JSON: {e}"))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1239,6 +1300,7 @@ fn validate_snapshot_export_package_dir(
     manifest_json: &str,
     report_tex: &str,
     report_docx: Option<&[u8]>,
+    marker_json: &str,
 ) -> Result<(), String> {
     if !root.is_dir() {
         return Err(format!("snapshot export package root {} was not created", root.display()));
@@ -1248,6 +1310,7 @@ fn validate_snapshot_export_package_dir(
     let source_pdf_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_SOURCE_PDF_PATH)?;
     let report_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_REPORT_PATH)?;
     let report_docx_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_REPORT_DOCX_PATH)?;
+    let marker_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_MARKER_PATH)?;
     let evidence_dir = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_EVIDENCE_DIR)?;
 
     let staged_manifest = std::fs::read_to_string(&manifest_path).map_err(|e| format!("could not read {}: {e}", manifest_path.display()))?;
@@ -1258,6 +1321,11 @@ fn validate_snapshot_export_package_dir(
     let staged_report = std::fs::read_to_string(&report_path).map_err(|e| format!("could not read {}: {e}", report_path.display()))?;
     if staged_report != report_tex {
         return Err("snapshot export report.tex does not match the generated report".into());
+    }
+
+    let staged_marker = std::fs::read_to_string(&marker_path).map_err(|e| format!("could not read {}: {e}", marker_path.display()))?;
+    if staged_marker != marker_json {
+        return Err("snapshot export report.marker.json does not match the generated report".into());
     }
 
     match report_docx {
@@ -1358,12 +1426,14 @@ fn write_snapshot_export_package_with_hooks(
     validate_snapshot_export_package_input(&input)?;
     let manifest_json = snapshot_export_manifest_json(&input.items)?;
     let report_tex = snapshot_export_report_tex(&input.items)?;
+    let marker_json = snapshot_export_marker_json(&input.items)?;
     let stage = create_snapshot_export_staging_dir(target)?;
 
     let result = (|| {
         write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_MANIFEST_PATH, manifest_json.as_bytes(), hooks)?;
         write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_SOURCE_PDF_PATH, input.source_pdf_bytes.as_slice(), hooks)?;
         write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_REPORT_PATH, report_tex.as_bytes(), hooks)?;
+        write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_MARKER_PATH, marker_json.as_bytes(), hooks)?;
         let images = render_snapshot_export_images(&stage, &input.render_source, &input.items, hooks)?;
         let report_docx = if input.include_word_report {
             let bytes = snapshot_export_report_docx(&input.title, &input.items, &images)?;
@@ -1379,6 +1449,7 @@ fn write_snapshot_export_package_with_hooks(
             &manifest_json,
             &report_tex,
             report_docx.as_deref(),
+            &marker_json,
         )?;
         if target.exists() {
             return Err(format!("snapshot export target already exists: {}", target.display()));
@@ -1420,6 +1491,9 @@ fn render_snapshot_export_item_ocr(
 /// report can include the selected portion's OCR text without changing the manifest contract.
 pub fn populate_snapshot_export_ocr(source: &ExportSource, items: &mut [SnapshotExportItem]) -> Result<(), String> {
     if items.iter().all(|item| item.ocr.is_some()) {
+        return Ok(());
+    }
+    if !crate::ocr::available() {
         return Ok(());
     }
     let mut renderer = PageRenderer::new(source.bytes.clone(), source.config.clone());
@@ -2009,6 +2083,132 @@ mod crop_review_project_tests {
 }
 
 #[cfg(test)]
+mod export_embedded_crop_review_tests {
+    use std::sync::Arc;
+
+    use chrono::{TimeZone, Utc};
+
+    use super::{CropPdfRect, CropReviewItem, EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME, ExportItemKind, crop_review_store_json};
+
+    fn timestamp(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 26, hour, minute, second).single().unwrap()
+    }
+
+    fn crop(id: &str, page_number: usize) -> CropReviewItem {
+        CropReviewItem {
+            id: id.to_owned(),
+            kind: ExportItemKind::Snapshot,
+            page_number,
+            rect_pdf: CropPdfRect { left: 12.5, bottom: 44.0, right: 90.0, top: 120.0 },
+            caption: format!("caption-{id}"),
+            note: Some(format!("note-{id}")),
+            ocr_text: Some(format!("ocr-{id}")),
+            ocr_extracted_at: Some(timestamp(10, 5, 0)),
+            created_at: timestamp(9, 55, 0),
+            updated_at: timestamp(10, 6, 0),
+        }
+    }
+
+    fn session_with(n: usize) -> (crate::Session, crate::DocId) {
+        let mut session = crate::Session::new().with_clock(|| 1_700_000_000);
+        let id = session.open("fixture.pdf", None, Arc::new(crate::tests::fixture(n)), None).unwrap();
+        (session, id)
+    }
+
+    fn attachment_keys(bytes: &Arc<Vec<u8>>) -> Vec<String> {
+        let doc = pdfcraft_cos::Document::open(bytes.clone()).unwrap();
+        pdfcraft_organize::attachment_keys(&doc)
+    }
+
+    fn embedded_fixture_with_crop_review(crops: &[CropReviewItem]) -> Arc<Vec<u8>> {
+        let mut cos = pdfcraft_cos::Document::open(Arc::new(crate::tests::fixture(2))).unwrap();
+        let json = crop_review_store_json(crops).unwrap();
+        pdfcraft_organize::add_attachment(
+            &mut cos,
+            EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME,
+            json.as_bytes(),
+            Some("PdfCraft embedded crop review workspace"),
+            pdfcraft_organize::mime_for_name(EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME),
+            Some("D:20261026100500Z"),
+        )
+        .unwrap();
+        Arc::new(pdfcraft_cos::write_full(&cos, &pdfcraft_cos::SaveOptions::default()).unwrap())
+    }
+
+    #[test]
+    fn export_open_restores_crop_review_store_from_reserved_embedded_attachment() {
+        let expected = vec![crop("crop-0001", 1), crop("crop-0002", 2)];
+        let bytes = embedded_fixture_with_crop_review(&expected);
+
+        assert!(attachment_keys(&bytes).contains(&EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME.to_owned()));
+
+        let mut session = crate::Session::new().with_clock(|| 1_700_000_000);
+        let id = session.open("embedded.pdf", None, bytes, None).unwrap();
+
+        assert_eq!(session.crop_review(id).unwrap().items(), expected.as_slice());
+    }
+
+    #[test]
+    fn export_save_and_reopen_preserve_reserved_embedded_crop_review_attachment() {
+        let expected = crop("crop-0001", 1);
+        let (mut session, id) = session_with(2);
+
+        // Crop-review mutations alone do not force a save yet, so pair the persistence check with
+        // one ordinary document edit and assert that the embedded mirror survives the round trip.
+        session.apply(id, crate::Edit::SetInfo { key: "Title".into(), value: "Crop review".into() }).unwrap();
+        session.crop_review_mut(id).unwrap().upsert(expected.clone()).unwrap();
+
+        let saved = session.save_bytes(id).unwrap();
+        assert!(attachment_keys(&saved).contains(&EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME.to_owned()));
+
+        session.mark_saved(id, saved.clone(), None).unwrap();
+        assert_eq!(session.crop_review(id).unwrap().items(), &[expected.clone()]);
+
+        let mut reopened = crate::Session::new().with_clock(|| 1_700_000_000);
+        let reopened_id = reopened.open("saved.pdf", None, saved, None).unwrap();
+        assert_eq!(reopened.crop_review(reopened_id).unwrap().items(), &[expected]);
+    }
+
+    #[test]
+    fn export_save_full_removes_reserved_embedded_attachment_when_crop_review_store_is_empty() {
+        let existing = crop("crop-0001", 1);
+        let bytes = embedded_fixture_with_crop_review(std::slice::from_ref(&existing));
+        let mut session = crate::Session::new().with_clock(|| 1_700_000_000);
+        let id = session.open("embedded.pdf", None, bytes, None).unwrap();
+
+        assert_eq!(session.crop_review(id).unwrap().items(), &[existing.clone()]);
+        assert!(session.crop_review_mut(id).unwrap().remove(&existing.id).is_some());
+        assert!(session.crop_review(id).unwrap().items().is_empty());
+
+        let saved = session.save_full_bytes(id).unwrap();
+        assert!(!attachment_keys(&saved).contains(&EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME.to_owned()));
+
+        session.mark_saved(id, saved.clone(), None).unwrap();
+        assert!(session.crop_review(id).unwrap().items().is_empty());
+
+        let mut reopened = crate::Session::new().with_clock(|| 1_700_000_000);
+        let reopened_id = reopened.open("saved.pdf", None, saved, None).unwrap();
+        assert!(reopened.crop_review(reopened_id).unwrap().items().is_empty());
+    }
+
+    #[test]
+    fn export_unchanged_documents_without_crop_review_do_not_gain_reserved_embedded_attachment() {
+        let (session, id) = session_with(1);
+        let original = session.get(id).unwrap().bytes.clone();
+
+        assert!(session.crop_review(id).unwrap().items().is_empty());
+
+        let saved = session.save_bytes(id).unwrap();
+        assert_eq!(saved, original);
+        assert!(!attachment_keys(&saved).contains(&EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME.to_owned()));
+
+        let mut reopened = crate::Session::new().with_clock(|| 1_700_000_000);
+        let reopened_id = reopened.open("saved.pdf", None, saved, None).unwrap();
+        assert!(reopened.crop_review(reopened_id).unwrap().items().is_empty());
+    }
+}
+
+#[cfg(test)]
 mod snapshot_export_artifact_tests {
     use serde_json::Value;
 
@@ -2030,14 +2230,14 @@ mod snapshot_export_artifact_tests {
                     page: 4,
                     rect: ExportRect { x: 90.5, y: 244.0, width: 180.0, height: 110.0 },
                     metadata: metadata("Comment {callout} _ review", None),
-                    ocr: None,
+                    ocr: Some(SnapshotExportOcr { text: "Recognized crop text two".into() }),
                 },
                 SnapshotExportItemInput {
                     order: 10,
                     page: 2,
                     rect: ExportRect { x: 72.0, y: 128.0, width: 216.0, height: 96.0 },
                     metadata: metadata("50% approved & signed #1", Some(r"Path C:\exports\item_{1} uses ~ temp ^ dir and costs $5.")),
-                    ocr: None,
+                    ocr: Some(SnapshotExportOcr { text: "Recognized crop text one".into() }),
                 },
             ],
         )
@@ -2051,7 +2251,7 @@ mod snapshot_export_artifact_tests {
         let expected = concat!(
             "{\n",
             "  \"package_kind\": \"pdfcraft.snapshot_export\",\n",
-            "  \"manifest_version\": \"1.0\",\n",
+            "  \"manifest_version\": \"1.1\",\n",
             "  \"source_pdf\": {\n",
             "    \"path\": \"source.pdf\",\n",
             "    \"state\": \"working-copy\"\n",
@@ -2084,7 +2284,8 @@ mod snapshot_export_artifact_tests {
             "        \"height_px\": 192\n",
             "      },\n",
             "      \"caption\": \"50% approved & signed #1\",\n",
-            "      \"note\": \"Path C:\\\\exports\\\\item_{1} uses ~ temp ^ dir and costs $5.\"\n",
+            "      \"note\": \"Path C:\\\\exports\\\\item_{1} uses ~ temp ^ dir and costs $5.\",\n",
+            "      \"ocr_text\": \"Recognized crop text one\"\n",
             "    },\n",
             "    {\n",
             "      \"id\": \"item_2\",\n",
@@ -2101,7 +2302,8 @@ mod snapshot_export_artifact_tests {
             "        \"width_px\": 360,\n",
             "        \"height_px\": 220\n",
             "      },\n",
-            "      \"caption\": \"Comment {callout} _ review\"\n",
+            "      \"caption\": \"Comment {callout} _ review\",\n",
+            "      \"ocr_text\": \"Recognized crop text two\"\n",
             "    }\n",
             "  ]\n",
             "}\n"
@@ -2132,6 +2334,7 @@ mod snapshot_export_artifact_tests {
             "    \\captionof{figure}{50\\% approved \\& signed \\#1}\n",
             "    \\label{fig:item_1}\n",
             "\\end{minipage}\n\n",
+            "\\noindent OCR.: Recognized crop text one\n\n",
             "    \\item Conforme a Figura~\\ref{fig:item_2}, Comment \\{callout\\} \\_ review.\n\n",
             "\\noindent\\begin{minipage}[t]{\\linewidth}\n",
             "    \\vspace{0pt}\n",
@@ -2141,6 +2344,7 @@ mod snapshot_export_artifact_tests {
             "    \\captionof{figure}{Comment \\{callout\\} \\_ review}\n",
             "    \\label{fig:item_2}\n",
             "\\end{minipage}\n\n",
+            "\\noindent OCR.: Recognized crop text two\n\n",
             "\\end{enumerate}\n\n",
             "\\end{document}\n"
         );
@@ -2529,8 +2733,8 @@ mod snapshot_export_package_tests {
             assert!(result.is_ok(), "{result:?}");
             assert!(!text.trim().is_empty(), "{text:?}");
         } else {
-            let err = result.unwrap_err();
-            assert!(err.contains("the text recognition models are not installed"), "{err}");
+            assert!(result.is_ok(), "{result:?}");
+            assert!(items[0].ocr.is_none());
         }
     }
 }

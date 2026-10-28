@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-25 (on top of upstream 0.14.0)
 
+- **Hardened** embedded crop-review persistence in `pdfcraft-engine` — focused export-path regressions now cover restoring the reserved `pdfcraft-crop-review.json` attachment on open, preserving it through save/reopen, removing it when the crop store becomes empty, and leaving unchanged documents without crop review free of the reserved attachment.
+
 - **Documented** crop-review persistence shapes and invariants — `docs/crop-review-workspace.md` now states that `source.pdf` plus `project.json` remains the canonical relocatable workspace, and it documents the implemented embedded PDF mirror at reserved attachment name `pdfcraft-crop-review.json` with schema-versioned UTF-8 JSON carrying the persisted crop fields.
 
 - **Documented** the current 1.1 crop-review export contract — `manifest.json` now carries canonical per-item `ocr_text`, the package includes derived `report.marker.json` and optional `report.docx`, and `report.tex` is documented with its shipped minimal `enumerate` + `minipage` structure.
