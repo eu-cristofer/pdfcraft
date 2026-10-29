@@ -25,6 +25,7 @@ Each run MUST:
 Status: active
 
 - [x] [Sprint 1 — Branding module and removal of the in-app marks](./sprint-1.md) — done 2026-10-29
+- [ ] [Sprint 1b — Baseline repair (added 2026-10-29, D-015)](./sprint-1b.md)
 - [ ] [Sprint 2 — App icon, ids and packaging metadata](./sprint-2.md)
 - [ ] [Sprint 3 — Portable Windows zip with OCR models](./sprint-3.md)
 - [ ] [Sprint 4 — Fork documentation layout](./sprint-4.md)
