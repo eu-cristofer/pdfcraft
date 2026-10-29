@@ -2,7 +2,7 @@
 # Build, sign and (optionally) notarize the macOS release artifacts:
 #
 #   $DIST/pdfcraft-<version>-macos-<arch>.dmg          PdfCraft.app on a drag-to-Applications DMG
-#   $DIST/pdfcraft-cli-<version>-macos-<arch>.zip      the headless CLI
+#   $DIST/pdfcraft-cli-<version>-macos-<arch>.zip      the headless CLI, with the OCR models
 #
 # Usage: packaging/macos/package.sh [--arch universal|aarch64|x86_64] [--skip-build]
 #
@@ -189,6 +189,8 @@ CLI_DIR="$WORK/pdfcraft-cli-$VERSION-macos-$ARCH"
 mkdir -p "$CLI_DIR"
 cp "$WORK/bin/pdfcraft-cli" "$CLI_DIR/"
 copy_docs "$CLI_DIR"
+# OCR models beside the binary (`batch --steps ocr`, crop export OCR): the CLI looks in models/.
+stage_models "$CLI_DIR/models"
 sign --options runtime "$CLI_DIR/pdfcraft-cli"
 codesign --verify --strict --verbose=2 "$CLI_DIR/pdfcraft-cli"
 rm -f "$CLI_ZIP"

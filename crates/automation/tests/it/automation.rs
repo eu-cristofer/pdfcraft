@@ -870,7 +870,8 @@ fn crop_review_package_export_through_tools() {
                 id: "crop-0001".into(),
                 kind: pdfcraft_engine::export::ExportItemKind::Snapshot,
                 page_number: 1,
-                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 10.0, bottom: 60.0, right: 90.0, top: 140.0 },
+                // Covers the fixture's "Page 1" (24 pt from y = 150), so OCR has text to find.
+                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 10.0, bottom: 140.0, right: 120.0, top: 185.0 },
                 caption: "First page".into(),
                 note: Some("First in canonical order".into()),
                 ocr_mode: pdfcraft_engine::export::CropReviewOcrMode::Auto,
@@ -892,7 +893,8 @@ fn crop_review_package_export_through_tools() {
     let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("package/manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["items"][0]["caption"], "First page");
     assert_eq!(manifest["items"][1]["caption"], "Second page");
-    assert_eq!(manifest["items"][0]["ocr_text"].is_string(), pdfcraft_engine::ocr::available());
+    // v1.1 rule: the crop's native text first (OCR only where there is none), so no models needed.
+    assert_eq!(manifest["items"][0]["ocr_text"].as_str().map(str::trim), Some("Page 1"), "{}", manifest["items"][0]);
     assert!(dir.join("package/report.marker.json").is_file());
 }
 

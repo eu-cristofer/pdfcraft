@@ -44,6 +44,18 @@ jobs:
           key: macos-universal
       - name: Build and package (ad-hoc signed)
         run: packaging/macos/package.sh --arch universal
+      # OCR must work from what ships: the CLI zip (models/ beside the binary) and the .app in the
+      # dmg (Contents/Resources/models; the CLI copied into Contents/MacOS uses the same lookup).
+      - name: OCR smoke test (packaged)
+        run: |
+          cli_dir="$RUNNER_TEMP/cli" app_dir="$RUNNER_TEMP/app" mnt="$RUNNER_TEMP/dmg"
+          ditto -x -k dist/release/pdfcraft-cli-*-macos-universal.zip "$cli_dir"
+          cli="$(echo "$cli_dir"/*/pdfcraft-cli)"
+          packaging/ocr-smoke.sh "$cli"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" dist/release/pdfcraft-*-macos-universal.dmg
+          mkdir -p "$app_dir" && cp -R "$mnt"/*.app "$app_dir"/ && hdiutil detach "$mnt"
+          bundle="$(echo "$app_dir"/*.app)"
+          cp "$cli" "$bundle/Contents/MacOS/" && packaging/ocr-smoke.sh "$bundle/Contents/MacOS/pdfcraft-cli"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-build
@@ -86,6 +98,14 @@ jobs:
           $zip = Get-Item dist/release/*-portable.zip
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           [IO.Compression.ZipFile]::OpenRead($zip.FullName).Entries | Select-Object -ExpandProperty FullName
+      # OCR must work from what ships: the extracted portable zip, models\ beside the exes.
+      # `shell: bash` is Git Bash on Windows runners (a bare `bash` from pwsh can be WSL's).
+      - name: OCR smoke test (portable zip)
+        shell: bash
+        run: |
+          dir="$RUNNER_TEMP/portable"
+          unzip -q dist/release/*-portable.zip -d "$dir"
+          packaging/ocr-smoke.sh "$(find "$dir" -name pdfcraft-cli.exe | head -n 1)"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-build
@@ -119,6 +139,8 @@ jobs:
           - Windows: unsigned, x64, portable zip: extract it anywhere and run pdfcraft.exe, no admin
             rights needed. Settings stay next to the exe (portable.txt), and the OCR models are in
             models\\. SmartScreen will warn on first run: "More info", then "Run anyway".
+          - OCR (Scan & OCR, crop export \`ocr_text\`) works offline in both builds: the models ship
+            inside them, and CI OCR-tested each package before publishing.
           - No Linux, FreeBSD or web build in this release.
           EOF
           gh release create "$TAG" \
