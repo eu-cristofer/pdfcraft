@@ -147,14 +147,12 @@ fn crop_review_export_uses_stored_items_not_a_transient_marquee() {
     assert_eq!(manifest["items"][0]["caption"], "First stored crop");
     assert_eq!(manifest["items"][1]["caption"], "Second stored crop");
     let report = std::fs::read_to_string(package.join("report.tex")).unwrap();
-    if pdfcraft_engine::ocr::available() {
-        assert!(report.contains("\\noindent OCR.:"), "{report}");
-    } else {
-        assert!(!report.contains("\\noindent OCR.:"), "{report}");
-    }
+    // The fixture's pages are blank, so no crop has text, with or without the OCR models: a
+    // model that "reads" a blank crop (as mismatched models did, D-017) fails here.
+    assert!(!report.contains("\\noindent OCR.:"), "{report}");
     let marker: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(package.join("report.marker.json")).unwrap()).unwrap();
     assert_eq!(marker["items"][0]["caption"], "First stored crop");
-    assert_eq!(marker["items"][0]["ocr_text"].is_string(), pdfcraft_engine::ocr::available());
+    assert!(!marker["items"][0]["ocr_text"].is_string(), "{}", marker["items"][0]);
     let docx = std::fs::read(package.join("report.docx")).unwrap();
     assert!(docx.windows(b"word/document.xml".len()).any(|w| w == b"word/document.xml"));
 }

@@ -1,16 +1,15 @@
 //! Names and identity of this build (Costa Inspection fork of PdfCraft).
 //!
-//! One place, so the final suite name (U1) is a one-file change; packaging files copy these
-//! values and say `keep in sync with crates/ui-egui/src/branding.rs`.
+//! One place for the suite and app names; packaging files copy these values and say `keep in sync with crates/ui-egui/src/branding.rs`.
 
-/// Name of the suite this app belongs to (placeholder until the final suite name, U1, is chosen).
-pub const SUITE_NAME: &str = "<Suite>";
+/// Name of the suite this app belongs to.
+pub const SUITE_NAME: &str = "WitnessPoint";
 
 /// Display name of this application.
-pub const APP_NAME: &str = "<Suite> PDF Review";
+pub const APP_NAME: &str = "WitnessPoint PDF Review";
 
-/// Application identifier: lowercase reverse-DNS. Placeholder until U1.
-pub const APP_ID: &str = "com.costainspection.suite-pdf";
+/// Application identifier: lowercase reverse-DNS. It is also the macOS bundle id.
+pub const APP_ID: &str = "com.costainspection.witnesspoint-pdf";
 
 /// Home page of this fork's source repository.
 pub const HOMEPAGE_URL: &str = "https://github.com/eu-cristofer/pdfcraft";

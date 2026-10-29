@@ -13,9 +13,9 @@ fn main() {
         return;
     }
     let mut res = winresource::WindowsResource::new();
-    res.set("ProductName", "PdfCraft")
-        .set("FileDescription", "PdfCraft command-line tool")
-        .set("LegalCopyright", "Copyright (c) the PdfCraft contributors. MIT OR Apache-2.0.")
+    res.set("ProductName", "WitnessPoint PDF Review")
+        .set("FileDescription", "WitnessPoint PDF Review command-line tool")
+        .set("LegalCopyright", "Copyright (c) Costa Inspection and the PdfCraft contributors. MIT OR Apache-2.0.")
         .set("OriginalFilename", "pdfcraft-cli.exe")
         .set("InternalName", "pdfcraft-cli");
     if let Err(e) = res.compile() {

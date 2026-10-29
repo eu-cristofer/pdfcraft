@@ -2795,7 +2795,7 @@ sha256 = "06ad72ea3a302a6679f215815e8f3b35ec0342e82773a591d615c7be7de8b763"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft.svg"
-title = "<Suite> PDF Review app icon (master vector)"
+title = "WitnessPoint PDF Review app icon (master vector)"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2806,7 +2806,7 @@ sha256 = "c0043c0eef61d24baa8bd49632ecdd4598e188f7ef18d4f90ee88608349596c5"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft-small.svg"
-title = "<Suite> PDF Review app icon (light vector)"
+title = "WitnessPoint PDF Review app icon (light vector)"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2817,7 +2817,7 @@ sha256 = "c0043c0eef61d24baa8bd49632ecdd4598e188f7ef18d4f90ee88608349596c5"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft-1024.png"
-title = "<Suite> PDF Review app icon, 1024 px on Apple's icon grid"
+title = "WitnessPoint PDF Review app icon, 1024 px on Apple's icon grid"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2828,7 +2828,7 @@ sha256 = "85842d1193dd27ae7f244d0818712a3ff838e6e7c7e2457ad71c2f9424af57a2"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft.icns"
-title = "<Suite> PDF Review app icon (macOS .icns)"
+title = "WitnessPoint PDF Review app icon (macOS .icns)"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2839,7 +2839,7 @@ sha256 = "d71a344baa125e134cd6f8daa661b967739afb0ae469688db96a5de8bd64c2d0"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft.ico"
-title = "<Suite> PDF Review app icon (Windows .ico, 16-256 px)"
+title = "WitnessPoint PDF Review app icon (Windows .ico, 16-256 px)"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2872,7 +2872,7 @@ sha256 = "ba3f9128b368fc6d17d376cf62dbdbc22455451c5c8c4779210d7a2a7409b9e6"
 
 [[asset]]
 path = "assets/app-icon/hicolor/16x16/apps/ai.storyteller.pdfcraft.png"
-title = "<Suite> PDF Review app icon, 16 px"
+title = "WitnessPoint PDF Review app icon, 16 px"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2883,7 +2883,7 @@ sha256 = "035c5b471516322d6b9d96b954e9d71c00dc5cd16846b3f5114a33b274fbf7f8"
 
 [[asset]]
 path = "assets/app-icon/hicolor/24x24/apps/ai.storyteller.pdfcraft.png"
-title = "<Suite> PDF Review app icon, 24 px"
+title = "WitnessPoint PDF Review app icon, 24 px"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2894,7 +2894,7 @@ sha256 = "ff1afdfb327edda329d02515363cf16726ccac39515018a998c9273b604db4bc"
 
 [[asset]]
 path = "assets/app-icon/hicolor/32x32/apps/ai.storyteller.pdfcraft.png"
-title = "<Suite> PDF Review app icon, 32 px"
+title = "WitnessPoint PDF Review app icon, 32 px"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2905,7 +2905,7 @@ sha256 = "2623e25e430f64286372c8536e0dfdd6f379253dca81e413993b38de2a530717"
 
 [[asset]]
 path = "assets/app-icon/hicolor/48x48/apps/ai.storyteller.pdfcraft.png"
-title = "<Suite> PDF Review app icon, 48 px"
+title = "WitnessPoint PDF Review app icon, 48 px"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2916,7 +2916,7 @@ sha256 = "3b384106877c2a2ebc0cf8159503e88d4fc861fdcd958638e225b9b7787c7f80"
 
 [[asset]]
 path = "assets/app-icon/hicolor/64x64/apps/ai.storyteller.pdfcraft.png"
-title = "<Suite> PDF Review app icon, 64 px"
+title = "WitnessPoint PDF Review app icon, 64 px"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2927,7 +2927,7 @@ sha256 = "dcde0243cae43ec614224e241d851885e2f5011d115d73545b44ac0396b75d52"
 
 [[asset]]
 path = "assets/app-icon/hicolor/128x128/apps/ai.storyteller.pdfcraft.png"
-title = "<Suite> PDF Review app icon, 128 px"
+title = "WitnessPoint PDF Review app icon, 128 px"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2938,7 +2938,7 @@ sha256 = "ae3f9a221b81e544f916857482349e5f5249d2b418572bbe2306469a007e79b5"
 
 [[asset]]
 path = "assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png"
-title = "<Suite> PDF Review app icon, 256 px"
+title = "WitnessPoint PDF Review app icon, 256 px"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2949,7 +2949,7 @@ sha256 = "cbd3389339499473c7691b0cf7133af77c4daa4f5df3f871d456cffec1218f50"
 
 [[asset]]
 path = "assets/app-icon/hicolor/512x512/apps/ai.storyteller.pdfcraft.png"
-title = "<Suite> PDF Review app icon, 512 px"
+title = "WitnessPoint PDF Review app icon, 512 px"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"
@@ -2960,7 +2960,7 @@ sha256 = "8ec86e3dbeb377f46731924bd081a8904d12f66e132ccd07a3f252006adc5a5f"
 
 [[asset]]
 path = "assets/app-icon/hicolor/scalable/apps/ai.storyteller.pdfcraft.svg"
-title = "<Suite> PDF Review app icon (Linux scalable)"
+title = "WitnessPoint PDF Review app icon (Linux scalable)"
 author = "Costa Inspection"
 source = "Contributor-original placeholder app icon (document and magnifier, from assets/brand-suite/suite-mark.svg) drawn for this fork, 2026-10-29; replaces the PdfCraft lion icon"
 licence = "MIT OR Apache-2.0"

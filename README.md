@@ -1,4 +1,4 @@
-# <Suite> PDF Review
+# WitnessPoint PDF Review
 
 A Rust-native PDF application for inspection work: review PDFs by cropping regions, annotating them, and exporting evidence packages.
 

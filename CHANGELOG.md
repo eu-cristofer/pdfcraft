@@ -11,7 +11,22 @@ from. Release tags follow that same runbook's methodology,
 `<upstream-version>-unsigned.<YYYYMMDD>` (e.g. `0.14.0-unsigned.20261025`) — so a release tag and
 a changelog entry always describe the same upstream lineage, just in two different places.
 
-## 2026-10-29 (on top of upstream 0.14.0)
+## 2026-10-29 (on top of upstream 0.14.0) — WitnessPoint PDF Review v0.1
+
+The first public pre-release of this fork, as **WitnessPoint PDF Review** (Costa Inspection's WitnessPoint suite). The crop review, OCR and evidence-package export work as they did on `feat/crop-panel-unification`, with no ArtCraft marks: a branding module and the suite's own placeholder mark (sprint 1), a green test suite (1b), its own icon, links and publisher (2), a Windows portable zip with the OCR models (3), the fork's docs layout (4), and working OCR checked in every package by CI (D-017). Details are in the entries below.
+
+- **Changed** the names to their final values (D-018): suite `WitnessPoint`, app `WitnessPoint PDF Review`, app id and macOS bundle id `com.costainspection.witnesspoint-pdf`. Upstream's bundle id would have made macOS treat this app and an installed upstream PdfCraft as the same app. The macOS app is now `WitnessPoint PDF Review.app` on a DMG volume of the same name; the window title and the Windows version info carry the new name; the MSI has its own UpgradeCode, so it can never replace an installed upstream PdfCraft. The macOS artifacts now carry the release tag in their version. The release title is "WitnessPoint PDF Review — unsigned build" (`006_pdf-release-v0-1` sprint 5).
+- **Fixed** two export tests that only passed while OCR could not run: the Export dialog test now expects no OCR text from its blank pages (it fails with the mismatched models of D-017), and the macOS file-association test re-encodes its captured LaunchServices binding with the new bundle path and id (`006_pdf-release-v0-1` sprint 5).
+- **Known, left on purpose:**
+  - the Linux, FreeBSD and Flatpak packaging and the hicolor icon file names still use `ai.storyteller.pdfcraft` (only `StartupWMClass` moved, to match the app id). None of them ships in v0.1; the upstream port (P5) renames them;
+  - the settings and recovery folder is still named `PdfCraft`, so it is shared with an upstream PdfCraft installed on the same machine. Moving it needs a migration;
+  - the executables are still `pdfcraft`/`pdfcraft-cli`, and the macOS executable inside the bundle is still `PdfCraft`;
+  - the MSI's shortcut and menu labels still say PdfCraft (the MSI is not published in v0.1);
+  - in-app translated strings that name PdfCraft are unchanged (the About box says "Based on PdfCraft");
+  - the DMG has no custom background: the committed Finder layout is bound to the old names. It opens as a plain window;
+  - the icon is still the placeholder.
+
+## 2026-10-29 (on top of upstream 0.14.0) — fixes and the work behind v0.1
 
 - **Fixed** OCR, which read every page as junk (`1`, `T`) in all builds: commit `17649c1b` had swapped the OCR models, during the upstream `.rten` URL brownout (ocrs #282), for other Hugging Face checkpoints that don't match the recogniser. Backported the OCR part of upstream `da8cea2b`: the author-published ONNX models (`text-detection.onnx`, `text-recognition.onnx`, SHA-256 verified), the `onnx_format` reader, model lookup that prefers a complete ONNX pair and falls back to a complete `.rten` pair, and the MSI check for the new file names. The macOS CLI zip now ships the models too (it had none). The release workflow OCR-tests every package before it can publish (`packaging/ocr-smoke.sh`: the Windows portable zip, the macOS CLI zip and the `.app`), and the crop-review package test now checks the crop's native text, which it never actually exercised before (`006_pdf-release-v0-1`, D-017).
 
