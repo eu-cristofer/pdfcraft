@@ -1,8 +1,10 @@
 # Windows No-Admin Portable Distribution Spec
 
-Last reviewed: 2026-10-28
+Last reviewed: 2026-10-29
 
 ## Status
+
+**Implemented** in `006_pdf-release-v0-1` sprint 3 (2026-10-29): `.github/workflows/unsigned-release.yml` builds the Windows portable zip with `packaging/windows/package.ps1`. It was verified in run https://github.com/eu-cristofer/pdfcraft/actions/runs/40854286030: the zip contains `pdfcraft.exe`, `pdfcraft-cli.exe`, `portable.txt`, `models/` (both OCR models with their licences and `ATTRIBUTION.txt`), the licences, `NOTICE` and the craft-fonts OFL notices.
 
 This document specifies a Windows distribution path for PdfCraft that works without administrator rights.
 
