@@ -54,3 +54,13 @@ test ! -d docs/brand
 ## Assumes
 
 - Sprint 1: `branding.rs` and `assets/brand-suite/*.svg` exist; no code references `docs/brand/`.
+
+## Addendum (2026-10-29, found while running sprint 1)
+
+The ArtCraft community links are code in the engine crate, so they can't use `crates/ui-egui/src/branding.rs` (layering: engine must not depend on ui-egui). They also suggest that ArtCraft supports this fork, which the brand licence forbids. This sprint therefore also covers:
+- `crates/engine/src/links.rs`: `DISCORD`, `WEBSITE`, `APP_PAGE`, `GITHUB` and the `LINKS` labels ("Join the ArtCraft Discord", "ArtCraft website", "PdfCraft web page"):
+  - point them at the fork's own resources (`https://github.com/eu-cristofer/pdfcraft`, plus its Issues page for help);
+  - or drop entries, keeping the registry commands consistent (`help.*` in the command registry).
+  - Keep one plain "PdfCraft on GitHub" (upstream) link as attribution.
+- The home screen card "Join the ArtCraft community" / "Get help, share feedback and follow development on Discord." (`crates/ui-egui/src/home.rs`) and the top-bar Discord button.
+- `crates/ui-egui/tests/it/links.rs`: update the expectations to the new links.
