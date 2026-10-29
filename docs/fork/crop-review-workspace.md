@@ -30,7 +30,7 @@ This note does not define:
 - a second UI shell separate from the existing document workspace
 - a generic annotation system beyond crop review
 - manual drag-reordering of crop items
-- a new export package family separate from `docs/snapshot-export-spec.md`
+- a new export package family separate from `docs/fork/snapshot-export-spec.md`
 - viewer-only state such as zoom level, scroll position, or panel open/closed state
 
 ## Summary
@@ -287,9 +287,9 @@ This workspace is upstream of export.
 
 Later export must consume the stored crop item list from the crop-review workspace rather than a transient drag gesture or ad hoc viewer selection.
 
-The package contract remains defined by `docs/snapshot-export-spec.md`.
+The package contract remains defined by `docs/fork/snapshot-export-spec.md`.
 
-The rectangle/export/OCR relationship remains defined by `docs/rectangle-driven-export.md`.
+The rectangle/export/OCR relationship remains defined by `docs/fork/rectangle-driven-export.md`.
 
 This note does not widen the snapshot package schema. For v1:
 

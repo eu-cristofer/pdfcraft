@@ -6,9 +6,9 @@ Last reviewed: 2026-10-26
 
 This document remains the repo-local source of truth for Sprint 1 of `002_selected-rec`.
 
-For `003_export-flow`, `docs/rectangle-driven-export.md` is the active source of truth. Where the two notes conflict, the rectangle-driven note supersedes this one. In particular, `003_export-flow` is driven by a user-created rectangle with typed metadata, not by selected comment annotations or annotation-derived text.
+For `003_export-flow`, `docs/fork/rectangle-driven-export.md` is the active source of truth. Where the two notes conflict, the rectangle-driven note supersedes this one. In particular, `003_export-flow` is driven by a user-created rectangle with typed metadata, not by selected comment annotations or annotation-derived text.
 
-It defines how PdfCraft will turn a selected comment annotation into one or more snapshot export items under the unchanged package contract in `docs/snapshot-export-spec.md`.
+It defines how PdfCraft will turn a selected comment annotation into one or more snapshot export items under the unchanged package contract in `docs/fork/snapshot-export-spec.md`.
 
 ## Scope
 
@@ -26,12 +26,12 @@ This note does not define:
 
 - arbitrary drag-region export
 - non-rectangle evidence kinds
-- changes to `docs/snapshot-export-spec.md`
+- changes to `docs/fork/snapshot-export-spec.md`
 - a new user-authored caption model separate from current comment data
 
 ## Relationship to the package contract
 
-`docs/snapshot-export-spec.md` remains unchanged and authoritative for package shape, manifest schema, coordinate language, deterministic IDs, and `report.tex` derivation.
+`docs/fork/snapshot-export-spec.md` remains unchanged and authoritative for package shape, manifest schema, coordinate language, deterministic IDs, and `report.tex` derivation.
 
 This note only defines how selected comments become normalized snapshot items that satisfy that package contract.
 
@@ -95,7 +95,7 @@ Each supported selected comment produces exactly one manifest item with `kind = 
 
 ### `caption`
 
-`caption` is required by `docs/snapshot-export-spec.md`.
+`caption` is required by `docs/fork/snapshot-export-spec.md`.
 
 For v1 selected-rectangle export, `caption` MUST be derived from the selected annotation kind's existing user-visible type name, using the same naming family already surfaced by engine comment type labeling.
 
@@ -116,7 +116,7 @@ This is the deliberate v1 replacement for the older `pdf_handler` explicit capti
 
 ### `note`
 
-`note` is optional in `docs/snapshot-export-spec.md`.
+`note` is optional in `docs/fork/snapshot-export-spec.md`.
 
 For v1 selected-rectangle export, `note` MUST be derived from the selected annotation's existing comment contents text.
 
@@ -126,7 +126,7 @@ Rules:
 - if the selected annotation has no contents text, or only empty/whitespace contents after the normal text cleanup used by current comment/report paths, omit `note`
 - `note` is plain text
 - `note` MUST NOT be treated as trusted LaTeX
-- later `report.tex` generation must continue to escape it as plain text per `docs/snapshot-export-spec.md`
+- later `report.tex` generation must continue to escape it as plain text per `docs/fork/snapshot-export-spec.md`
 
 This keeps v1 aligned with the current repo trust model, where comment/report text is data that must survive plain-text export rather than markup that is trusted by default.
 
@@ -285,7 +285,7 @@ This sprint does not implement product code, but later sprints should build thes
 - headless: an automation/CLI entrypoint that accepts existing comment targets and routes them through the same engine path
 - engine: one shared selected-comment-to-snapshot normalization path used by both desktop and headless callers
 
-The engine boundary is the contract seam. UI and automation choose targets; the engine resolves supported comments into normalized snapshot items; package writing stays governed by `docs/snapshot-export-spec.md`.
+The engine boundary is the contract seam. UI and automation choose targets; the engine resolves supported comments into normalized snapshot items; package writing stays governed by `docs/fork/snapshot-export-spec.md`.
 
 ## Failure rules specific to this feature
 
@@ -297,7 +297,7 @@ Later implementations of selected-rectangle export MUST fail the operation if an
 - the resolved annotation does not yield one valid displayed rectangle
 - the comment text mapping cannot produce valid plain-text manifest fields under the existing package contract
 
-These failures are in addition to the existing package-level failure rules in `docs/snapshot-export-spec.md`.
+These failures are in addition to the existing package-level failure rules in `docs/fork/snapshot-export-spec.md`.
 
 ## Summary
 

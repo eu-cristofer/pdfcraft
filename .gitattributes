@@ -13,3 +13,6 @@
 *.ico binary
 *.png binary
 *.brotli binary
+
+# The fork keeps its own README (D-016). Needs, once per clone: git config merge.ours.driver true
+README.md merge=ours

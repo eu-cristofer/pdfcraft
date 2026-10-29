@@ -25,7 +25,7 @@ git remote add upstream https://github.com/storytold/pdfcraft.git
 ## 2. Sync this fork's `main` with upstream
 
 This fork's `main` is **not** a pure mirror — it carries commits upstream doesn't have
-(`.github/workflows/unsigned-release.yml`, `docs/techind/`). That means a fast-forward won't
+(`.github/workflows/unsigned-release.yml`, `docs/fork/techind/`). That means a fast-forward won't
 work; this is a real merge.
 
 ```sh

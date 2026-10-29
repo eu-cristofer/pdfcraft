@@ -33,7 +33,7 @@ Fill in the final names and publish the first public pre-release of `<Suite>` PD
 
 ## Reuse
 
-- `docs/techind/update-fork-and-release.md` (moved to `docs/fork/techind/` in sprint 4): the fork's release runbook and tag methodology.
+- `docs/fork/techind/update-fork-and-release.md` (moved to `docs/fork/techind/` in sprint 4): the fork's release runbook and tag methodology.
 
 ## Tests
 

@@ -25,15 +25,15 @@ This note does not define:
 
 - a generic report system
 - non-snapshot evidence kinds
-- a new package family separate from `docs/snapshot-export-spec.md`
+- a new package family separate from `docs/fork/snapshot-export-spec.md`
 - arbitrary trusted-LaTeX fields
 - a requirement that the export rectangle be persisted as a PDF annotation
 - final command names or UI copy for later sprints
-- the persistent crop-review workspace defined in `docs/crop-review-workspace.md`
+- the persistent crop-review workspace defined in `docs/fork/crop-review-workspace.md`
 
 ## Relationship to the crop-review workspace
 
-`docs/crop-review-workspace.md` defines the separate persistent crop-review product surface.
+`docs/fork/crop-review-workspace.md` defines the separate persistent crop-review product surface.
 
 That workspace is intentionally not the same thing as the original snapshot tool covered here:
 
@@ -45,7 +45,7 @@ This note remains authoritative only for the rectangle-driven snapshot-export fl
 
 ## Relationship to the package contract
 
-`docs/snapshot-export-spec.md` remains authoritative for:
+`docs/fork/snapshot-export-spec.md` remains authoritative for:
 
 - package shape
 - `manifest.json` canonicality
@@ -252,7 +252,7 @@ The downstream use case remains a minimal evidence package centered on snapshot 
 
 ## Superseded earlier assumptions
 
-`docs/selected-rectangle-export.md` remains a historical contract for `002_selected-rec`.
+`docs/fork/selected-rectangle-export.md` remains a historical contract for `002_selected-rec`.
 
 For `003_export-flow`, the following earlier assumptions are superseded:
 

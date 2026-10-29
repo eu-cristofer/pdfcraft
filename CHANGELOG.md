@@ -6,12 +6,14 @@ current at the time — it is not, and does not try to be, upstream's own change
 history. Entries are keyed by date and the upstream version they were built on, since the version
 number in `Cargo.toml` is upstream's, not this fork's, to assign meaning to.
 
-See `docs/techind/update-fork-and-release.md` for the sync/re-release process these entries come
+See `docs/fork/techind/update-fork-and-release.md` for the sync/re-release process these entries come
 from. Release tags follow that same runbook's methodology,
 `<upstream-version>-unsigned.<YYYYMMDD>` (e.g. `0.14.0-unsigned.20261025`) — so a release tag and
 a changelog entry always describe the same upstream lineage, just in two different places.
 
 ## 2026-10-29 (on top of upstream 0.14.0)
+
+- **Moved** the fork-only docs to `docs/fork/` (with an index in `docs/fork/README.md`), and restored upstream's `AGENTS.md`, `CLAUDE.md` and `ROADMAP.md`. Upstream's `AGENTS.md` (the binding asset and provenance rules) had been replaced on 2026-10-25 by a generated agent guide, which is kept as `docs/fork/agent-notes.md`. `README.md` is now the fork's own short README (D-016); `.gitattributes` keeps it on upstream merges (`README.md merge=ours`; run `git config merge.ours.driver true` once per clone). Removed `docs/images/pdfcraft-tools.png`, which showed the ArtCraft mark. Archived sprint projects 002 (superseded), 003 and 005 (`006_pdf-release-v0-1` sprint 4).
 
 - **Changed** the Windows build of the unsigned release workflow to the supported packaging path (`packaging/windows/package.ps1`): a portable zip with the OCR models in `models\`, `portable.txt`, licences and font notices, built with the same craft-fonts revision as official releases. No admin rights needed. Only the zip is published; the MSI waits for its own UpgradeCode in sprint 5 (`006_pdf-release-v0-1` sprint 3).
 
