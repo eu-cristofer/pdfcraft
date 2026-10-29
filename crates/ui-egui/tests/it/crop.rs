@@ -93,7 +93,9 @@ fn field<'a>(h: &'a Harness<'static, PdfCraftApp>, label: &'a str) -> egui_kitte
 }
 
 fn label<'a>(h: &'a Harness<'static, PdfCraftApp>, text: &'a str) -> egui_kittest::Node<'a> {
-    h.query_all_by(|node| node.label().as_deref() == Some(text)).next().unwrap_or_else(|| panic!("no label {text:?}"))
+    // kittest's label query, not a raw `node.label()` comparison: egui exposes a text label's text so that only the
+    // former finds it.
+    h.query_all_by_label(text).next().unwrap_or_else(|| panic!("no label {text:?}"))
 }
 
 fn crop_center(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: CropPdfRect) -> Pos2 {

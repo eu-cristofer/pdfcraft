@@ -165,13 +165,13 @@ fn check(h: &Harness<'static, PdfCraftApp>, name: &str) -> Result<(), String> {
 
 use chrono::TimeZone;
 
-/// Every panel, in the order of the rail.
-const ALL: [RightPanel; 13] = [
+/// Every panel shown in the rail, in its order. `RightPanel::Metadata` is a legacy persisted value restored as Crops,
+/// so it has no panel of its own.
+const ALL: [RightPanel; 12] = [
     RightPanel::Comments,
     RightPanel::Bookmarks,
     RightPanel::Pages,
     RightPanel::Crops,
-    RightPanel::Metadata,
     RightPanel::Fields,
     RightPanel::Layers,
     RightPanel::Attachments,
@@ -203,7 +203,7 @@ fn open(p: RightPanel) -> (Harness<'static, PdfCraftApp>, &'static str) {
                     rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 24.0, bottom: 120.0, right: 108.0, top: 180.0 },
                     caption: "Desk rectangle".into(),
                     note: Some("Reporter header".into()),
-                    ocr_mode: pdfcraft_engine::export::CropReviewOcrMode::Auto,
+                    ocr_mode: pdfcraft_engine::export::CropReviewOcrMode::Skip, // deterministic: "OCR skipped" does not depend on whether OCR models are installed
                     ocr_text: None,
                     ocr_extracted_at: None,
                     created_at: chrono::Utc.timestamp_opt(10, 0).single().expect("timestamp"),
@@ -214,7 +214,7 @@ fn open(p: RightPanel) -> (Harness<'static, PdfCraftApp>, &'static str) {
             h.run_steps(3);
             return (h, "crops");
         }
-        RightPanel::Metadata => unreachable!("metadata panel was merged into crops"),
+        RightPanel::Metadata => unreachable!("legacy value restored as Crops; not in ALL"),
         RightPanel::Fields => "fields",
         RightPanel::Layers => "layers",
         RightPanel::Attachments => "attachments",

@@ -696,7 +696,7 @@ fn image_signature_preview_follows_pointer_at_page_size_with_zoom_and_rotation()
     }
     h.hover_at(pos2(5.0, 5.0));
     h.run_steps(2);
-    assert_eq!(h.output().platform_output.cursor_icon, egui::CursorIcon::Default, "the pointer stays visible off the page");
+    assert_ne!(h.output().platform_output.cursor_icon, egui::CursorIcon::None, "the pointer stays visible off the page");
     std::fs::remove_file(path).unwrap();
 }
 

@@ -133,18 +133,22 @@ pub(crate) fn page_input(
 
     let Some(pointer) = ptr.pos.filter(|p| xf.rect.contains(*p)) else { return false };
     let items = page_items(doc, page).map(|item| (item, xf.user_rect(&doc.info, page, user_rect(item)))).collect::<Vec<_>>();
-    let handle_hit = items.iter().filter_map(|(item, rect)| handle_hit(*rect, pointer).map(|kind| (*item, *rect, kind))).next_back();
+    let pointer_handle = items.iter().filter_map(|(item, rect)| handle_hit(*rect, pointer).map(|kind| (*item, *rect, kind))).next_back();
     let rect_hit = items.iter().rfind(|(_, rect)| rect.expand(4.0).contains(pointer)).copied();
 
     if resp.drag_started()
         && let Some(start) = ptr.origin.filter(|p| xf.rect.contains(*p))
     {
-        if let Some((item, rect, kind)) = handle_hit {
+        // Hit-test where the drag began: by the time egui reports the drag, the pointer has already moved past the drag
+        // threshold, so a quick drag from a corner would no longer be on its handle.
+        let start_handle = items.iter().filter_map(|(item, rect)| handle_hit(*rect, start).map(|kind| (*item, *rect, kind))).next_back();
+        let start_rect = items.iter().rfind(|(_, rect)| rect.expand(4.0).contains(start)).copied();
+        if let Some((item, rect, kind)) = start_handle {
             view.crop_review.select(item.id.as_str());
             view.crop_review.gesture = Some(crate::crop_review_ui::CropGesture { page, kind, id: item_id(item), from_rect: rect, start });
             return true;
         }
-        if let Some((item, rect)) = rect_hit {
+        if let Some((item, rect)) = start_rect {
             view.crop_review.select(item.id.as_str());
             view.crop_review.gesture = Some(crate::crop_review_ui::CropGesture {
                 page,
@@ -164,7 +168,7 @@ pub(crate) fn page_input(
         return true;
     }
 
-    (handle_hit.is_some() || rect_hit.is_some()) && resp.is_pointer_button_down_on()
+    (pointer_handle.is_some() || rect_hit.is_some()) && resp.is_pointer_button_down_on()
 }
 
 pub(crate) fn paint_page(
@@ -288,7 +292,7 @@ fn detail(ui: &mut egui::Ui, t: &Tokens, view: &mut DocView, item: &CropReviewIt
         }
 
         ui.horizontal(|ui| {
-            ui.label(tl!("OCR"));
+            let ocr_label = ui.label(tl!("OCR"));
             egui::ComboBox::from_id_salt(("crop-ocr-mode", item.id.as_str()))
                 .selected_text(match view.crop_review.metadata_ocr_mode {
                     CropReviewOcrMode::Auto => tl!("Auto"),
@@ -299,7 +303,9 @@ fn detail(ui: &mut egui::Ui, t: &Tokens, view: &mut DocView, item: &CropReviewIt
                     ui.selectable_value(&mut view.crop_review.metadata_ocr_mode, CropReviewOcrMode::Auto, tl!("Auto"));
                     ui.selectable_value(&mut view.crop_review.metadata_ocr_mode, CropReviewOcrMode::Include, tl!("Include"));
                     ui.selectable_value(&mut view.crop_review.metadata_ocr_mode, CropReviewOcrMode::Skip, tl!("Skip"));
-                });
+                })
+                .response
+                .labelled_by(ocr_label.id);
         });
         if view.crop_review.metadata_ocr_mode != item.ocr_mode {
             edit = Some(pending_metadata_edit(view, item.id.as_str()));

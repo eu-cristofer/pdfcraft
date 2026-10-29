@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-29 (on top of upstream 0.14.0)
 
+- **Fixed** baseline test failures in the fork's earlier work: a quick drag from a crop's corner handle now resizes the crop (the drag start is hit-tested where the drag began, not where the pointer is when egui reports it); the crop OCR-mode dropdown now has an accessible name (labelled by its "OCR" label); the Crops panel has a deterministic snapshot; the panel snapshot test no longer lists the legacy `Metadata` panel (restored as Crops); the fill & sign off-page cursor test is back to upstream's "pointer stays visible" check. Local full test runs need `CRAFT_FONTS_DIR` set to an **absolute** path of a craft-fonts checkout for 10 CJK/Thai tests (`006_pdf-release-v0-1` sprint 1b).
+
 - **Removed** the ArtCraft trademarks from the app: a `branding` module now names the build (`<Suite> PDF Review`, a placeholder until the suite name is chosen), the About dialog and home screen show a contributor-original suite mark, and About states "Based on PdfCraft" in plain text (`006_pdf-release-v0-1` sprint 1).
 
 - **Planned** the first public release of the fork as the Costa Inspection suite's PDF Review tool: project `006_pdf-release-v0-1` (rebrand without the ArtCraft trademarks, portable Windows zip with OCR models, fork docs under `docs/fork/`, release gated on the suite name).
