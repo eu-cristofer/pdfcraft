@@ -70,7 +70,7 @@ impl PdfCraftApp {
                     extracted_at: Utc::now(),
                 })
             })
-            .unwrap_or_else(|panic| Err(panic));
+            .unwrap_or_else(Err);
             if let Ok(mut slot) = out.lock() {
                 slot.result = Some(result);
             }
