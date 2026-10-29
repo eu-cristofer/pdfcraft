@@ -2871,6 +2871,17 @@ usage = "ArtCraft branding next to the community links (About dialog, Help menu,
 sha256 = "f87af81b6fa411da8820eed2bfdcc54c0ee9cd453b4e868c64f56c69db142d0e"
 
 [[asset]]
+path = "assets/brand-suite/suite-mark.svg"
+title = "<Suite> mark"
+author = "Costa Inspection"
+source = "Contributor-original geometric mark (document and magnifier), drawn for this fork, 2026-10-29"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "logo"
+usage = "Suite mark in the About dialog and the home screen community card; replaces the ArtCraft mark, which forks must remove"
+sha256 = "06ad72ea3a302a6679f215815e8f3b35ec0342e82773a591d615c7be7de8b763"
+
+[[asset]]
 path = "assets/app-icon/pdfcraft.svg"
 title = "PdfCraft app icon (master vector)"
 author = "PdfCraft contributors (drawn by the project owner in ArtCraft; vectorised with craftrules vectorize_tile.py)"

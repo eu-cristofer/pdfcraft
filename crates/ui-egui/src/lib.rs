@@ -36,6 +36,7 @@ mod a11y_ui;
 mod actions_ui;
 mod all_tools_ui;
 mod appearance;
+pub mod branding;
 mod calc_order_ui;
 pub mod canvas;
 mod chrome;
@@ -3760,7 +3761,7 @@ impl eframe::App for PdfCraftApp {
             .active
             .and_then(|i| crate::canvas::tab_label(self, i))
             .or_else(|| self.combine_showing().then(|| tl!("Combine files").to_owned()))
-            .map_or_else(|| "PdfCraft".to_owned(), |name| format!("{name} — PdfCraft"));
+            .map_or_else(|| crate::branding::APP_NAME.to_owned(), |name| format!("{name} — {}", crate::branding::APP_NAME));
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;

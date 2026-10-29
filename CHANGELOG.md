@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-29 (on top of upstream 0.14.0)
 
+- **Removed** the ArtCraft trademarks from the app: a `branding` module now names the build (`<Suite> PDF Review`, a placeholder until the suite name is chosen), the About dialog and home screen show a contributor-original suite mark, and About states "Based on PdfCraft" in plain text (`006_pdf-release-v0-1` sprint 1).
+
 - **Planned** the first public release of the fork as the Costa Inspection suite's PDF Review tool: project `006_pdf-release-v0-1` (rebrand without the ArtCraft trademarks, portable Windows zip with OCR models, fork docs under `docs/fork/`, release gated on the suite name).
 
 ## 2026-10-25 (on top of upstream 0.14.0)
