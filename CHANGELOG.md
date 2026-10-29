@@ -13,6 +13,15 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-29 (on top of upstream 0.14.0)
 
+- **Replaced** the ArtCraft community links (Discord, ArtCraft website, getartcraft.com app page) with this build's own: a Help button and menu entry open the fork's issue tracker, "This app on GitHub" opens the fork, and "PdfCraft on GitHub" stays as attribution to upstream. The CLI's help lines point at the issue tracker too (`006_pdf-release-v0-1` sprint 2).
+- **Replaced** the PdfCraft lion app icon with a contributor-original placeholder (a document and a magnifier on teal) in every size and format (`packaging/icons.sh`). The file names stay upstream's for now (`006_pdf-release-v0-1` sprint 2).
+- **Removed** `docs/brand/` (the ArtCraft trademarks) and its attribution entries. `NOTICE` now states that this is a modified version of PdfCraft by Costa Inspection, not made or endorsed by the ArtCraft Team (`006_pdf-release-v0-1` sprint 2).
+- **Changed** the packaging publisher to Costa Inspection, with the fork's URLs: the Windows installer (`pdfcraft.wxs`, its MSI test), the Linux package (`nfpm.yaml`), AppStream metadata, and macOS Credits (`006_pdf-release-v0-1` sprint 2).
+- **For sprint 5 (needs the suite name, U1):**
+  - the app id `ai.storyteller.pdfcraft` is still used in `apps/pdfcraft/src/main.rs` (Wayland app id), `packaging/icons.sh`, `packaging/macos/Info.plist.in`, `packaging/linux/` (desktop, metainfo, flatpak, package scripts), `packaging/freebsd/package.sh`, `crates/ui-egui/src/macos_association.rs`, `xtask/src/gates.rs`, `xtask/src/macos_integration.rs` and the hicolor icon file names. A new app id moves the settings and recovery directory;
+  - the user-visible product name "PdfCraft" is still used in installers and metadata;
+  - **the MSI `UpgradeCode` (`pdfcraft.wxs`) is upstream's**, so this installer would replace an installed upstream PdfCraft. It needs a new GUID.
+
 - **Fixed** baseline test failures in the fork's earlier work: a quick drag from a crop's corner handle now resizes the crop (the drag start is hit-tested where the drag began, not where the pointer is when egui reports it); the crop OCR-mode dropdown now has an accessible name (labelled by its "OCR" label); the Crops panel has a deterministic snapshot; the panel snapshot test no longer lists the legacy `Metadata` panel (restored as Crops); the fill & sign off-page cursor test is back to upstream's "pointer stays visible" check. Local full test runs need `CRAFT_FONTS_DIR` set to an **absolute** path of a craft-fonts checkout for 10 CJK/Thai tests (`006_pdf-release-v0-1` sprint 1b).
 
 - **Removed** the ArtCraft trademarks from the app: a `branding` module now names the build (`<Suite> PDF Review`, a placeholder until the suite name is chosen), the About dialog and home screen show a contributor-original suite mark, and About states "Based on PdfCraft" in plain text (`006_pdf-release-v0-1` sprint 1).

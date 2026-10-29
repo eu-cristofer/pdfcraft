@@ -74,7 +74,7 @@ foreach ($sequence in @('InstallUISequence', 'InstallExecuteSequence')) {
   }
 }
 $manufacturer = Read-Row 'SELECT `Value` FROM `Property` WHERE `Property` = ''Manufacturer''' 1
-Assert-Equal $manufacturer[0] 'Learning Machines LLC' 'MSI manufacturer'
+Assert-Equal $manufacturer[0] 'Costa Inspection' 'MSI manufacturer'
 
 # Embedded craft-fonts must ship their OFL notices; a build without them must not claim any.
 # Check the compiled File table, not only the WiX source, so a staging or component-group mistake

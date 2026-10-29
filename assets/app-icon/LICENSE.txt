@@ -1,8 +1,9 @@
-PdfCraft app icon (pdfcraft.svg, pdfcraft-small.svg and every file derived from them in this
-directory: pdfcraft-1024.png, pdfcraft.icns, pdfcraft.ico, hicolor/).
+<Suite> PDF Review app icon (pdfcraft.svg, pdfcraft-small.svg and every file derived from them in
+this directory: pdfcraft-1024.png, pdfcraft.icns, pdfcraft.ico, hicolor/).
 
-Original artwork made for this project by the project owner, drawn in ArtCraft and vectorised for
-PdfCraft (no third-party material). Licensed like the rest of PdfCraft, under either of
+Contributor-original placeholder artwork made for this fork by Costa Inspection (a document and a
+magnifier on a teal tile, from assets/brand-suite/suite-mark.svg; no third-party material). It
+replaces the PdfCraft lion icon. Licensed like the rest of PdfCraft, under either of
 
   * Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
   * MIT license (https://opensource.org/licenses/MIT)

@@ -1,28 +1,21 @@
-# PdfCraft app icon
+# <Suite> PDF Review app icon
 
-<img src="pdfcraft-small.svg" alt="PdfCraft app icon: an engraved lion's head on green" width="128">
+<img src="pdfcraft-small.svg" alt="<Suite> PDF Review app icon: a document and a magnifier on teal" width="128">
 
-**Creature:** a lion, in a frontal head-and-shoulders portrait, mane running off the bottom of the tile.
+**Motif:** a document outline with a folded corner and a magnifier over its lower right: reviewing documents.
+It is a placeholder until the suite's final name and icon are chosen (input U1).
 
-**Style:** an engraving (woodcut-weight line work) portrait in the Crafting Apps "owl template" framing:
-a full-bleed colour field, no frame or roundel, the animal looking at the viewer and filling the tile.
+**Palette:** two colours: white line work (`#ffffff`, 30 px round strokes on the 512 tile) on a full-bleed teal
+field (`#0f766e`).
 
-**Palette:** exactly three colours.
+**Tile:** `viewBox="0 0 512 512"`, a rounded square with `rx=112` that clips everything (kept from upstream so the
+packaging scripts are unchanged). Windows and Linux icons use the full-bleed tile. macOS icons put it on
+Apple's grid (an 824 px body centred on a transparent 1024 px canvas).
 
-| Colour | Hex | Used for |
-|---|---|---|
-| Ink | `#0b0b0c` | line work and the figure's contour |
-| Paper | `#efe9dc` | the figure (the lion's silhouette) |
-| PdfCraft green (app colour) | `#12a58a` | the full-bleed field |
-
-**Tile:** `viewBox="0 0 512 512"`, a rounded square with `rx=112` that clips everything. Windows and Linux
-icons use the full-bleed tile. macOS icons put it on Apple's grid (an 824 px body centred on a transparent
-1024 px canvas).
-
-**Provenance:** the project owner's original drawing, made in ArtCraft (2880 px, keyed to the palette), then
-vectorised with craftrules `assets/logo-options/_tools/vectorize_tile.py` (potrace; no filtering or
-warping). The source drawing is kept in craftrules at `assets/app-icons/pdfcraft/source.png`, not here.
-Licence: [LICENSE.txt](LICENSE.txt) (`MIT OR Apache-2.0`, like the repo).
+**Provenance:** contributor-original, drawn for this fork by Costa Inspection (2026-10-29), scaled from
+`assets/brand-suite/suite-mark.svg`. It replaces the PdfCraft lion icon. The file names keep upstream's
+`pdfcraft*` and `ai.storyteller.pdfcraft` names so the packaging scripts need no change; the app id is renamed
+in a later step. Licence: [LICENSE.txt](LICENSE.txt) (`MIT OR Apache-2.0`, like the repo).
 
 ## Files
 
