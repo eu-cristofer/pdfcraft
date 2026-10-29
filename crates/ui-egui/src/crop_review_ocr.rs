@@ -100,7 +100,12 @@ impl PdfCraftApp {
     }
 
     pub(crate) fn invalidate_crop_review_ocr_store(store: &mut CropReviewStore) {
-        let ids = store.items().iter().filter(|item| item.ocr_mode != CropReviewOcrMode::Skip && (item.ocr_text.is_some() || item.ocr_extracted_at.is_some())).map(|item| item.id.clone()).collect::<Vec<_>>();
+        let ids = store
+            .items()
+            .iter()
+            .filter(|item| item.ocr_mode != CropReviewOcrMode::Skip && (item.ocr_text.is_some() || item.ocr_extracted_at.is_some()))
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
         for id in ids {
             if let Some(mut item) = store.get(&id).cloned() {
                 item.ocr_text = None;

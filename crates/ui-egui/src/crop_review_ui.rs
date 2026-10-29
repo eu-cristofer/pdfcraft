@@ -1,10 +1,7 @@
 //! Per-document crop-review UI state.
 
 use egui::{Pos2, Rect};
-use pdfcraft_engine::{
-    Document,
-    export::CropReviewOcrMode,
-};
+use pdfcraft_engine::{Document, export::CropReviewOcrMode};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct CropReviewView {

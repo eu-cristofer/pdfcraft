@@ -67,9 +67,7 @@ impl PdfCraftApp {
                         && doc_has_xfa == had_xfa
                         && !doc_has_xfa
                         && is_form_edit(&edit));
-                if invalidate_crop_ocr
-                    && let Ok(store) = self.session.crop_review_mut(id)
-                {
+                if invalidate_crop_ocr && let Ok(store) = self.session.crop_review_mut(id) {
                     Self::invalidate_crop_review_ocr_store(store);
                 }
                 let view = &mut self.views[i];

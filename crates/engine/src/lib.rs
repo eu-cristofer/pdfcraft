@@ -1026,9 +1026,10 @@ fn embedded_file_spec(cos: &pdfcraft_cos::Document, node: &pdfcraft_cos::Object,
     let binding = cos.resolve(node);
     let dict = binding.as_dict()?;
     if let Some(names) = dict.get(b"Names").and_then(pdfcraft_cos::Object::as_array) {
-        for pair in names.chunks_exact(2) {
-            if pair[0].as_string().is_some_and(|s| s.to_text() == name) {
-                return Some(pair[1].clone());
+        let (pairs, _) = names.as_chunks::<2>();
+        for [key, value] in pairs {
+            if key.as_string().is_some_and(|s| s.to_text() == name) {
+                return Some(value.clone());
             }
         }
     }

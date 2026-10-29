@@ -913,7 +913,7 @@ fn crop_review_changes_mark_the_document_dirty_and_survive_save_and_reopen() {
 
     let saved_doc = pdfcraft_cos::Document::open(saved.clone()).unwrap();
     let restored = super::embedded_crop_review_store(&saved_doc);
-    assert_eq!(restored.items(), &[crop.clone()]);
+    assert_eq!(restored.items(), std::slice::from_ref(&crop));
 
     let mut reopened = Session::new().with_clock(|| 1_700_000_000);
     let reopened_id = reopened.open("saved.pdf", None, saved, None).unwrap();

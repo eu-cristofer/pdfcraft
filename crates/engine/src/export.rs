@@ -990,11 +990,11 @@ pub fn snapshot_export_report_tex(items: &[SnapshotExportItem]) -> Result<String
         out.push_str("\\end{minipage}\n");
 
         if let Some(ocr) = item.ocr.as_ref().map(|ocr| ocr.text.trim()).filter(|text| !text.is_empty()) {
-            out.push_str("\n");
+            out.push('\n');
             out.push_str(&format!("\\noindent OCR.: {}\n", latex_escape_plain_text(ocr)));
         }
 
-        out.push_str("\n");
+        out.push('\n');
     }
     out.push_str("\\end{enumerate}\n\n\\end{document}\n");
 
@@ -2241,7 +2241,7 @@ mod export_embedded_crop_review_tests {
         assert!(attachment_keys(&saved).contains(&EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME.to_owned()));
 
         session.mark_saved(id, saved.clone(), None).unwrap();
-        assert_eq!(session.crop_review(id).unwrap().items(), &[expected.clone()]);
+        assert_eq!(session.crop_review(id).unwrap().items(), std::slice::from_ref(&expected));
 
         let mut reopened = crate::Session::new().with_clock(|| 1_700_000_000);
         let reopened_id = reopened.open("saved.pdf", None, saved, None).unwrap();
@@ -2255,7 +2255,7 @@ mod export_embedded_crop_review_tests {
         let mut session = crate::Session::new().with_clock(|| 1_700_000_000);
         let id = session.open("embedded.pdf", None, bytes, None).unwrap();
 
-        assert_eq!(session.crop_review(id).unwrap().items(), &[existing.clone()]);
+        assert_eq!(session.crop_review(id).unwrap().items(), std::slice::from_ref(&existing));
         assert!(session.crop_review_mut(id).unwrap().remove(&existing.id).is_some());
         assert!(session.crop_review(id).unwrap().items().is_empty());
 
@@ -2817,15 +2817,12 @@ mod snapshot_export_package_tests {
         )
         .unwrap();
 
+        // The rectangle covers native page text, which is preferred over bitmap OCR (17649c1b), so the
+        // text is filled with or without OCR models; models only matter for regions without a text layer.
         let result = populate_snapshot_export_ocr(&source, &mut items);
-        if crate::ocr::available() {
-            let text = items[0].ocr.as_ref().map(|ocr| ocr.text.clone()).unwrap_or_default();
-            assert!(result.is_ok(), "{result:?}");
-            assert!(!text.trim().is_empty(), "{text:?}");
-        } else {
-            assert!(result.is_ok(), "{result:?}");
-            assert!(items[0].ocr.is_none());
-        }
+        assert!(result.is_ok(), "{result:?}");
+        let text = items[0].ocr.as_ref().map(|ocr| ocr.text.clone()).unwrap_or_default();
+        assert!(text.contains("Page 1"), "{text:?}");
     }
 
     #[test]
