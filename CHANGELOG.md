@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-29 (on top of upstream 0.14.0)
 
+- **Changed** the Windows build of the unsigned release workflow to the supported packaging path (`packaging/windows/package.ps1`): a portable zip with the OCR models in `models\`, `portable.txt`, licences and font notices, built with the same craft-fonts revision as official releases. No admin rights needed. Only the zip is published; the MSI waits for its own UpgradeCode in sprint 5 (`006_pdf-release-v0-1` sprint 3).
+
 - **Replaced** the ArtCraft community links (Discord, ArtCraft website, getartcraft.com app page) with this build's own: a Help button and menu entry open the fork's issue tracker, "This app on GitHub" opens the fork, and "PdfCraft on GitHub" stays as attribution to upstream. The CLI's help lines point at the issue tracker too (`006_pdf-release-v0-1` sprint 2).
 - **Replaced** the PdfCraft lion app icon with a contributor-original placeholder (a document and a magnifier on teal) in every size and format (`packaging/icons.sh`). The file names stay upstream's for now (`006_pdf-release-v0-1` sprint 2).
 - **Removed** `docs/brand/` (the ArtCraft trademarks) and its attribution entries. `NOTICE` now states that this is a modified version of PdfCraft by Costa Inspection, not made or endorsed by the ArtCraft Team (`006_pdf-release-v0-1` sprint 2).

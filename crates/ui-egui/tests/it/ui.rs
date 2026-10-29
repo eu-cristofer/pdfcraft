@@ -664,7 +664,7 @@ fn tabs_shrink_to_fit_then_arrows_step_through_them_and_open_stays_in_sight() {
     let open = h.get_by_label("Open").rect();
     let right = h.get_by_label("Scroll tabs right").rect();
     assert!(right.right() <= open.left() + 0.5 && open.right() <= h.get_by_role_and_label(egui::accesskit::Role::Button, "Help").rect().left());
-    // Twenty: Open stays in sight left of Discord.
+    // Twenty: Open stays in sight left of Help.
     for i in 0..13 {
         h.state_mut().open_bytes(&format!("more-{i:02}.pdf"), None, FIXTURE.to_vec()).unwrap();
     }

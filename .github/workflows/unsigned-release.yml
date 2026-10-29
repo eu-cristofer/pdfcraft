@@ -46,25 +46,44 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      # Static CRT so the .exe runs without the Visual C++ redistributable installed.
-      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+      # Same craft-fonts revision as the official release.yml: embeds the Japanese UI fonts and
+      # ships their OFL notices beside the binaries.
+      CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+      PDFCRAFT_VERSION: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          path: craft-fonts
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: windows-x64
-      - name: Build
-        run: cargo build --release -p pdfcraft -p pdfcraft-cli
-      - name: Zip
+      # package.ps1 always builds the MSI too (and checks it with test-msi.ps1), so it needs WiX.
+      - name: Install WiX v5
+        run: dotnet tool install --global wix --version 5.0.2
+      # The supported packaging path: static CRT, PE checks, OCR models (`cargo xtask models`,
+      # SHA-256 verified) in models\, portable.txt, licences and font notices. Unsigned: sign.ps1
+      # warns and skips when no signing secrets are set.
+      - name: Build and package (portable)
+        shell: pwsh
+        run: pwsh packaging/windows/package.ps1 -Arch x64
+      # Only the portable zip is published. The MSI still carries upstream PdfCraft's UpgradeCode,
+      # so it would replace an installed upstream PdfCraft; it ships once sprint 5 gives it its own.
+      - name: List the portable zip
         shell: pwsh
         run: |
-          Compress-Archive -Path target/release/pdfcraft.exe, target/release/pdfcraft-cli.exe `
-            -DestinationPath pdfcraft-windows-x64.zip
+          $zip = Get-Item dist/release/*-portable.zip
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [IO.Compression.ZipFile]::OpenRead($zip.FullName).Entries | Select-Object -ExpandProperty FullName
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-build
-          path: pdfcraft-windows-x64.zip
+          path: dist/release/*-portable.zip
 
   release:
     needs: [macos, windows]
@@ -90,13 +109,14 @@ jobs:
           - macOS: ad-hoc signed, universal (Apple Silicon + Intel). Gatekeeper will block it on
             launch; right-click the app → Open (or \`xattr -dr com.apple.quarantine PdfCraft.app\`
             after extracting from the .dmg).
-          - Windows: unsigned, x64, no installer (plain \`.exe\`s in the zip). SmartScreen will warn
-            on first run — "More info" → "Run anyway".
+          - Windows: unsigned, x64, portable zip: extract it anywhere and run pdfcraft.exe, no admin
+            rights needed. Settings stay next to the exe (portable.txt), and the OCR models are in
+            models\\. SmartScreen will warn on first run: "More info", then "Run anyway".
           - No Linux, FreeBSD or web build in this release.
           EOF
           gh release create "$TAG" \
             --repo "${{ github.repository }}" \
-            --title "Unsigned dev build ($TAG)" \
+            --title "<Suite> PDF Review — unsigned build ($TAG)" \
             --prerelease \
             --notes-file notes.md \
             assets/macos/* assets/windows/*
