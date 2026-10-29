@@ -60,3 +60,8 @@ Plus the link check above, which must print nothing.
 
 - Sprints 1–3 are on this branch.
 - Upstream fork point `83ba2868` exists locally: `git cat-file -e 83ba2868`.
+
+## Addendum (2026-10-29, found while running sprint 2)
+
+- `docs/images/pdfcraft-tools.png` (the README tool catalogue) shows the ArtCraft mark; its `ATTRIBUTION.toml` usage says so. Regenerate it after sprints 1–2 with `cargo xtask screenshots`, so it shows the suite mark, and update its attribution entry. If regenerating isn't possible, remove the image and its README reference.
+- "Restore upstream text in `README.md`" must not bring back anything that **displays** the ArtCraft marks: logo images, the screenshot above, or badges linking to `docs/brand/`, which is deleted in sprint 2. Keep upstream's text, drop or replace those elements, and add the one-line fork pointer. This is the one allowed exception to "README differs from upstream by only the pointer line".
