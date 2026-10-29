@@ -11,6 +11,10 @@ from. Release tags follow that same runbook's methodology,
 `<upstream-version>-unsigned.<YYYYMMDD>` (e.g. `0.14.0-unsigned.20261025`) — so a release tag and
 a changelog entry always describe the same upstream lineage, just in two different places.
 
+## 2026-10-29 (on top of upstream 0.14.0)
+
+- **Planned** the first public release of the fork as the Costa Inspection suite's PDF Review tool: project `006_pdf-release-v0-1` (rebrand without the ArtCraft trademarks, portable Windows zip with OCR models, fork docs under `docs/fork/`, release gated on the suite name).
+
 ## 2026-10-25 (on top of upstream 0.14.0)
 
 - **Restored** the desktop `edit.snapshot` tool to its original copy-only behavior — dragging a snapshot rectangle now copies pixels without opening the package-export dialog, while crop-review package export and the shared headless snapshot package tool remain available on their own paths.
