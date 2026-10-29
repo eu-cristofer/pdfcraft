@@ -13,6 +13,8 @@ a changelog entry always describe the same upstream lineage, just in two differe
 
 ## 2026-10-29 (on top of upstream 0.14.0)
 
+- **Fixed** the unsigned release workflow: the macOS job now runs on the standard `macos-15` runner (`macos-14` no longer acquired a hosted runner, so run 40854286030 published nothing), and a new `publish` input (off by default) makes a dispatch build-only unless it is ticked, so a test run from a feature branch cannot publish a release.
+
 - **Moved** the fork-only docs to `docs/fork/` (with an index in `docs/fork/README.md`), and restored upstream's `AGENTS.md`, `CLAUDE.md` and `ROADMAP.md`. Upstream's `AGENTS.md` (the binding asset and provenance rules) had been replaced on 2026-10-25 by a generated agent guide, which is kept as `docs/fork/agent-notes.md`. `README.md` is now the fork's own short README (D-016); `.gitattributes` keeps it on upstream merges (`README.md merge=ours`; run `git config merge.ours.driver true` once per clone). Removed `docs/images/pdfcraft-tools.png`, which showed the ArtCraft mark. Archived sprint projects 002 (superseded), 003 and 005 (`006_pdf-release-v0-1` sprint 4).
 
 - **Changed** the Windows build of the unsigned release workflow to the supported packaging path (`packaging/windows/package.ps1`): a portable zip with the OCR models in `models\`, `portable.txt`, licences and font notices, built with the same craft-fonts revision as official releases. No admin rights needed. Only the zip is published; the MSI waits for its own UpgradeCode in sprint 5 (`006_pdf-release-v0-1` sprint 3).

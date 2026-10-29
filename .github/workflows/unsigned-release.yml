@@ -18,6 +18,10 @@ on:
       tag:
         description: "Release tag to create, e.g. v0.8.0-unsigned"
         required: true
+      publish:
+        description: "Publish the GitHub Release (off: build only, artifacts stay on the run)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -27,7 +31,9 @@ env:
 
 jobs:
   macos:
-    runs-on: macos-14 # normal tier; macos-15-xlarge (used by release.yml) needs a paid large-runner plan
+    # Standard arm64 tier. macos-14 stopped acquiring hosted runners (run 40854286030);
+    # macos-15-xlarge (used by release.yml) needs a paid large-runner plan.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -87,6 +93,7 @@ jobs:
 
   release:
     needs: [macos, windows]
+    if: inputs.publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
