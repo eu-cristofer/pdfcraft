@@ -4648,6 +4648,44 @@ fn synthetic_ocr_scan_keeps_the_original_page_size_without_models() {
     assert_eq!(page_texts(&s, id), [""], "the scan has no text until OCR runs");
 }
 
+/// A crop's OCR reads that crop and nothing else: on a 300 DPI scan of a text page, the OCR of
+/// each half of the page matches the native text of the same half of the original. The OCR tile
+/// was once scaled twice, so a crop read the area at twice its coordinates.
+#[test]
+fn snapshot_export_ocr_reads_the_selected_portion_of_a_scan() {
+    if !ocr::available() {
+        eprintln!("skipped: OCR models not installed");
+        return;
+    }
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let blank_lines = "\n".repeat(30);
+    let text = s.create_from_text("t", &format!("ALPHA BRAVO CHARLIE{blank_lines}DELTA ECHO FOXTROT")).unwrap();
+    let text_id = s.open("text.pdf", None, text, None).unwrap();
+    let png = export::Exporter::new(s.get(text_id).unwrap()).png(0, SYNTHETIC_SCAN_DPI).unwrap();
+    let scan = s.create_from_images_with_resolution(&[("scan.png".into(), png)], ImageResolution::Dpi(SYNTHETIC_SCAN_DPI)).unwrap();
+    let scan_id = s.open("scan.pdf", None, scan, None).unwrap();
+    let (width, height) = s.get(text_id).unwrap().export_source().sizes[0];
+    let crop = |source: &export::ExportSource, y: f32| {
+        let mut items = vec![export::SnapshotExportItem {
+            id: "item_1".into(),
+            kind: export::ExportItemKind::Snapshot,
+            page: 1,
+            rect: export::ExportRect { x: 0.0, y, width, height: height / 2.0 },
+            image_path: "evidence/item_1.png".into(),
+            metadata: export::SnapshotExportMetadata { caption: "half".into(), note: None },
+            ocr: None,
+            allow_ocr_fill: true,
+        }];
+        export::populate_snapshot_export_ocr(source, &mut items).unwrap();
+        items[0].ocr.as_ref().map(|ocr| ocr.text.split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default()
+    };
+    let (text_source, scan_source) = (s.get(text_id).unwrap().export_source(), s.get(scan_id).unwrap().export_source());
+    for (y, expected) in [(0.0, "ALPHA BRAVO CHARLIE"), (height / 2.0, "DELTA ECHO FOXTROT")] {
+        assert_eq!(crop(&text_source, y), expected, "native text of the half at y = {y}");
+        assert_eq!(crop(&scan_source, y), expected, "OCR of the half at y = {y}");
+    }
+}
+
 #[test]
 fn recognize_text_makes_a_scanned_page_searchable() {
     if !ocr::available() {
