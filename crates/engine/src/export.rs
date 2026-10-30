@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind, Tile};
 use serde::{Deserialize, Serialize};
 
+use crate::js::words_with;
 use crate::{Document, comment_kind};
 
 /// Renders and extracts pages of one document state.
@@ -64,11 +65,24 @@ pub struct SnapshotExportMetadata {
 }
 
 /// OCR derived from the same selected portion as the snapshot rectangle.
-///
-/// v1 keeps this seam in the engine model without making it canonical manifest data yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotExportOcr {
     pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CropReviewOcrMode {
+    #[default]
+    Auto,
+    Include,
+    Skip,
+}
+
+impl CropReviewOcrMode {
+    pub fn allows_ocr(self) -> bool {
+        !matches!(self, Self::Skip)
+    }
 }
 
 /// Raw rectangle-driven snapshot export data before canonical ordering, IDs and image paths are assigned.
@@ -81,6 +95,8 @@ pub struct SnapshotExportItemInput {
     pub metadata: SnapshotExportMetadata,
     /// OCR for this selected portion, when a later caller has already derived it.
     pub ocr: Option<SnapshotExportOcr>,
+    /// Whether missing OCR may be derived later for this item.
+    pub allow_ocr_fill: bool,
 }
 
 /// The export package item kind. v1 only emits snapshots, but later package artifacts consume
@@ -157,6 +173,7 @@ pub struct CropReviewItem {
     pub rect_pdf: CropPdfRect,
     pub caption: String,
     pub note: Option<String>,
+    pub ocr_mode: CropReviewOcrMode,
     pub ocr_text: Option<String>,
     pub ocr_extracted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -195,7 +212,14 @@ impl CropReviewItem {
 
     pub fn export_item_input(&self, order: usize, page: &pdfcraft_render::PageInfo) -> Result<SnapshotExportItemInput, String> {
         self.validate()?;
-        Ok(SnapshotExportItemInput { order, page: self.page_number, rect: self.export_rect(page)?, metadata: self.metadata(), ocr: self.ocr() })
+        Ok(SnapshotExportItemInput {
+            order,
+            page: self.page_number,
+            rect: self.export_rect(page)?,
+            metadata: self.metadata(),
+            ocr: self.ocr(),
+            allow_ocr_fill: self.ocr_mode.allows_ocr(),
+        })
     }
 }
 
@@ -216,6 +240,8 @@ impl Document {
             items: self.crop_review_snapshot_export_items()?,
             render_source: self.export_source(),
             source_pdf_bytes: self.bytes.clone(),
+            title: self.info.title.clone().unwrap_or_else(|| self.name.trim_end_matches(".pdf").to_string()),
+            include_word_report: false,
         })
     }
 }
@@ -288,6 +314,8 @@ struct CropReviewProjectCropJson {
     rect_pdf: CropReviewProjectRectJson,
     caption: String,
     note: Option<String>,
+    #[serde(default)]
+    ocr_mode: CropReviewOcrMode,
     ocr_text: Option<String>,
     ocr_extracted_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
@@ -325,6 +353,36 @@ impl CropReviewProjectJson {
     }
 }
 
+pub const EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME: &str = "pdfcraft-crop-review.json";
+
+pub fn crop_review_store_json(crops: &[CropReviewItem]) -> Result<String, String> {
+    let project = CropReviewProject { source_pdf_bytes: Arc::new(Vec::new()), crops: crops.to_vec() };
+    let json = CropReviewProjectJson {
+        schema_version: CROP_REVIEW_PROJECT_SCHEMA_VERSION,
+        source_pdf: String::new(),
+        crops: project.crops.iter().map(CropReviewProjectCropJson::from_item).collect(),
+    };
+    serde_json::to_string_pretty(&json)
+        .map(|mut out| {
+            out.push('\n');
+            out
+        })
+        .map_err(|e| format!("failed to serialize crop review JSON: {e}"))
+}
+
+pub fn crop_review_store_from_json(json_text: &str) -> Result<CropReviewStore, String> {
+    let json: CropReviewProjectJson = serde_json::from_str(json_text).map_err(|e| format!("crop review JSON is not valid: {e}"))?;
+    if json.schema_version != CROP_REVIEW_PROJECT_SCHEMA_VERSION {
+        return Err(format!("crop review schema version {} is not supported", json.schema_version));
+    }
+    let mut store = CropReviewStore::new();
+    for crop in json.crops {
+        let item = crop.into_item()?;
+        store.upsert(item)?;
+    }
+    Ok(store)
+}
+
 impl CropReviewProjectCropJson {
     fn from_item(item: &CropReviewItem) -> Self {
         Self {
@@ -339,6 +397,7 @@ impl CropReviewProjectCropJson {
             },
             caption: item.caption.clone(),
             note: item.note.clone(),
+            ocr_mode: item.ocr_mode,
             ocr_text: item.ocr_text.clone(),
             ocr_extracted_at: item.ocr_extracted_at,
             created_at: item.created_at,
@@ -358,6 +417,7 @@ impl CropReviewProjectCropJson {
             rect_pdf: CropPdfRect { left: self.rect_pdf.left, bottom: self.rect_pdf.bottom, right: self.rect_pdf.right, top: self.rect_pdf.top },
             caption: self.caption,
             note: self.note,
+            ocr_mode: self.ocr_mode,
             ocr_text: self.ocr_text,
             ocr_extracted_at: self.ocr_extracted_at,
             created_at: self.created_at,
@@ -379,6 +439,7 @@ impl CropReviewProjectCropJson {
             rect_pdf: CropPdfRect { left: self.rect_pdf.left, bottom: self.rect_pdf.bottom, right: self.rect_pdf.right, top: self.rect_pdf.top },
             caption: self.caption.clone(),
             note: self.note.clone(),
+            ocr_mode: self.ocr_mode,
             ocr_text: self.ocr_text.clone(),
             ocr_extracted_at: self.ocr_extracted_at,
             created_at: self.created_at,
@@ -422,6 +483,8 @@ pub struct SnapshotExportItem {
     pub metadata: SnapshotExportMetadata,
     /// OCR for this selected portion, kept out of `manifest.json` in v1.
     pub ocr: Option<SnapshotExportOcr>,
+    /// Whether missing OCR may be derived later for this item.
+    pub allow_ocr_fill: bool,
 }
 
 /// End-to-end inputs for writing one snapshot export package.
@@ -432,6 +495,10 @@ pub struct SnapshotExportPackageInput {
     pub render_source: ExportSource,
     /// Working-file bytes for `source.pdf`.
     pub source_pdf_bytes: Arc<Vec<u8>>,
+    /// Title used by derived convenience artifacts such as `report.docx`.
+    pub title: String,
+    /// Whether the package should also include a derived Word report.
+    pub include_word_report: bool,
 }
 
 /// A selected comment in the engine-facing 1-based page/index shape shared with other comment
@@ -537,6 +604,7 @@ fn selected_comment_snapshot_export_item_input_from_parts(
         rect: selected_comment_export_rect(page, annotation)?,
         metadata: selected_comment_metadata(annotation)?,
         ocr: None,
+        allow_ocr_fill: true,
     })
 }
 
@@ -657,15 +725,18 @@ pub fn normalize_snapshot_export_items(page_count: usize, items: Vec<SnapshotExp
             image_path,
             metadata: item.metadata,
             ocr: item.ocr,
+            allow_ocr_fill: item.allow_ocr_fill,
         });
     }
     Ok(normalized)
 }
 
 const SNAPSHOT_EXPORT_PACKAGE_KIND: &str = "pdfcraft.snapshot_export";
-const SNAPSHOT_EXPORT_MANIFEST_VERSION: &str = "1.0";
+const SNAPSHOT_EXPORT_MANIFEST_VERSION: &str = "1.1";
 const SNAPSHOT_EXPORT_MANIFEST_PATH: &str = "manifest.json";
 const SNAPSHOT_EXPORT_REPORT_PATH: &str = "report.tex";
+const SNAPSHOT_EXPORT_REPORT_DOCX_PATH: &str = "report.docx";
+const SNAPSHOT_EXPORT_MARKER_PATH: &str = "report.marker.json";
 const SNAPSHOT_EXPORT_EVIDENCE_DIR: &str = "evidence";
 const SNAPSHOT_EXPORT_SOURCE_PDF_PATH: &str = "source.pdf";
 const SNAPSHOT_EXPORT_SOURCE_PDF_STATE: &str = "working-copy";
@@ -873,10 +944,13 @@ pub fn snapshot_export_manifest_json(items: &[SnapshotExportItem]) -> Result<Str
             out.push_str(",\n");
             out.push_str("      \"note\": ");
             out.push_str(&json_string(note)?);
-            out.push('\n');
-        } else {
-            out.push('\n');
         }
+        if let Some(ocr) = item.ocr.as_ref() {
+            out.push_str(",\n");
+            out.push_str("      \"ocr_text\": ");
+            out.push_str(&json_string(&ocr.text)?);
+        }
+        out.push('\n');
         out.push_str("    }");
         if index + 1 != item_count {
             out.push(',');
@@ -893,35 +967,67 @@ pub fn snapshot_export_manifest_json(items: &[SnapshotExportItem]) -> Result<Str
 pub fn snapshot_export_report_tex(items: &[SnapshotExportItem]) -> Result<String, String> {
     validate_snapshot_export_contract_items(items)?;
 
-    let mut out = String::from("\\section*{Snapshot Evidence}\n\n");
-    for (index, item) in items.iter().enumerate() {
-        out.push_str("\\begin{figure}[htbp]\n");
-        out.push_str("\\centering\n");
-        out.push_str(&format!("\\includegraphics[width=\\linewidth]{{{}}}\n", item.image_path));
-        out.push_str(&format!("\\caption{{{}}}\n", latex_escape_plain_text(&item.metadata.caption)));
-        out.push_str(&format!("\\label{{fig:{}}}\n", item.id));
-        out.push_str("\\end{figure}\n");
-
-        if let Some(note) = item.metadata.note.as_deref() {
-            out.push('\n');
-            out.push_str("\\paragraph{Note.}\n");
-            out.push_str(&latex_escape_plain_text(note));
-            out.push('\n');
-        }
+    let mut out = String::from(concat!(
+        "\\documentclass{article}\n",
+        "\\usepackage[T1]{fontenc}\n",
+        "\\usepackage[utf8]{inputenc}\n",
+        "\\usepackage{graphicx}\n",
+        "\\usepackage{caption}\n",
+        "\\usepackage{csquotes}\n",
+        "\\begin{document}\n\n",
+        "\\begin{enumerate}\n"
+    ));
+    for item in items {
+        let item_text = item.metadata.note.as_deref().map(str::trim).filter(|text| !text.is_empty()).unwrap_or(item.metadata.caption.as_str());
+        out.push_str(&format!("    \\item Conforme a Figura~\\ref{{fig:{}}}, {}.\n\n", item.id, latex_escape_plain_text(item_text)));
+        out.push_str("\\noindent\\begin{minipage}[t]{\\linewidth}\n");
+        out.push_str("    \\vspace{0pt}\n");
+        out.push_str("    \\centering\n");
+        out.push_str(&format!("    \\fbox{{\\includegraphics[width=\\linewidth]{{{}}}}}\n", item.image_path));
+        out.push_str("    \\captionsetup{justification=centering}\n");
+        out.push_str(&format!("    \\captionof{{figure}}{{{}}}\n", latex_escape_plain_text(&item.metadata.caption)));
+        out.push_str(&format!("    \\label{{fig:{}}}\n", item.id));
+        out.push_str("\\end{minipage}\n");
 
         if let Some(ocr) = item.ocr.as_ref().map(|ocr| ocr.text.trim()).filter(|text| !text.is_empty()) {
             out.push('\n');
-            out.push_str("\\paragraph{OCR.}\n");
-            out.push_str(&latex_escape_plain_text(ocr));
-            out.push('\n');
+            out.push_str(&format!("\\noindent OCR.: {}\n", latex_escape_plain_text(ocr)));
         }
 
-        if index + 1 != items.len() {
-            out.push('\n');
-        }
+        out.push('\n');
     }
+    out.push_str("\\end{enumerate}\n\n\\end{document}\n");
 
     Ok(out)
+}
+
+/// Renders a machine-readable report for AI pipelines from the canonical ordered item list.
+pub fn snapshot_export_marker_json(items: &[SnapshotExportItem]) -> Result<String, String> {
+    validate_snapshot_export_contract_items(items)?;
+    let value = serde_json::json!({
+        "package_kind": SNAPSHOT_EXPORT_PACKAGE_KIND,
+        "manifest_version": SNAPSHOT_EXPORT_MANIFEST_VERSION,
+        "items": items
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "id": item.id,
+                    "kind": item.kind.as_str(),
+                    "page": item.page,
+                    "image_path": item.image_path,
+                    "caption": item.metadata.caption,
+                    "note": item.metadata.note,
+                    "ocr_text": item.ocr.as_ref().map(|ocr| ocr.text.clone()),
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    serde_json::to_string_pretty(&value)
+        .map(|mut out| {
+            out.push('\n');
+            out
+        })
+        .map_err(|e| format!("failed to serialize snapshot export marker JSON: {e}"))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1144,15 +1250,17 @@ fn render_snapshot_export_images(
     source: &ExportSource,
     items: &[SnapshotExportItem],
     hooks: &SnapshotExportWriteHooks,
-) -> Result<(), String> {
+) -> Result<Vec<Vec<u8>>, String> {
     let evidence_dir = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_EVIDENCE_DIR)?;
     std::fs::create_dir_all(&evidence_dir).map_err(|e| format!("could not create {}: {e}", evidence_dir.display()))?;
     let mut renderer = PageRenderer::new(source.bytes.clone(), source.config.clone());
+    let mut rendered = Vec::with_capacity(items.len());
     for item in items {
         let png = render_snapshot_export_item_png(&mut renderer, source, item)?;
         write_snapshot_export_file(root, &item.image_path, &png, hooks)?;
+        rendered.push(png);
     }
-    Ok(())
+    Ok(rendered)
 }
 
 fn snapshot_export_png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
@@ -1161,12 +1269,73 @@ fn snapshot_export_png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     Ok((info.width, info.height))
 }
 
+fn snapshot_export_report_docx(title: &str, items: &[SnapshotExportItem], images: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+    validate_snapshot_export_contract_items(items)?;
+    if images.len() != items.len() {
+        return Err(format!("snapshot export Word report expects {} rendered images, got {}", items.len(), images.len()));
+    }
+
+    let pages = items
+        .iter()
+        .zip(images)
+        .map(|(item, bytes)| {
+            let mut blocks = vec![pdfcraft_export::Block {
+                text: item.metadata.caption.clone(),
+                rect: [72.0, 720.0, 540.0, 744.0],
+                size: 14.0,
+                bold: true,
+                italic: false,
+                color: [0.0, 0.0, 0.0],
+                rotation: 0.0,
+                space_around: [false, false],
+            }];
+            if let Some(note) = item.metadata.note.as_deref().map(str::trim).filter(|text| !text.is_empty()) {
+                blocks.push(pdfcraft_export::Block {
+                    text: note.to_owned(),
+                    rect: [72.0, 680.0, 540.0, 704.0],
+                    size: 11.0,
+                    bold: false,
+                    italic: false,
+                    color: [0.0, 0.0, 0.0],
+                    rotation: 0.0,
+                    space_around: [false, false],
+                });
+            }
+            if let Some(ocr) = item.ocr.as_ref().map(|ocr| ocr.text.trim()).filter(|text| !text.is_empty()) {
+                blocks.push(pdfcraft_export::Block {
+                    text: format!("OCR.: {ocr}"),
+                    rect: [72.0, 640.0, 540.0, 664.0],
+                    size: 10.0,
+                    bold: false,
+                    italic: false,
+                    color: [0.0, 0.0, 0.0],
+                    rotation: 0.0,
+                    space_around: [false, false],
+                });
+            }
+            let image_height = f64::from(item.rect.height.max(1.0));
+            let image_width = f64::from(item.rect.width.max(1.0));
+            let images = vec![pdfcraft_export::Image {
+                ext: "png",
+                bytes: std::sync::Arc::from(bytes.clone()),
+                rect: [72.0, 300.0, 72.0 + image_width, 300.0 + image_height],
+                size: [image_width, image_height],
+                rotation: 0.0,
+            }];
+            pdfcraft_export::Page { width: 612.0, height: 792.0, blocks, images, background: None }
+        })
+        .collect::<Vec<_>>();
+    Ok(pdfcraft_export::docx(&pages, title))
+}
+
 fn validate_snapshot_export_package_dir(
     root: &Path,
     source_pdf_bytes: &[u8],
     items: &[SnapshotExportItem],
     manifest_json: &str,
     report_tex: &str,
+    report_docx: Option<&[u8]>,
+    marker_json: &str,
 ) -> Result<(), String> {
     if !root.is_dir() {
         return Err(format!("snapshot export package root {} was not created", root.display()));
@@ -1175,6 +1344,8 @@ fn validate_snapshot_export_package_dir(
     let manifest_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_MANIFEST_PATH)?;
     let source_pdf_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_SOURCE_PDF_PATH)?;
     let report_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_REPORT_PATH)?;
+    let report_docx_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_REPORT_DOCX_PATH)?;
+    let marker_path = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_MARKER_PATH)?;
     let evidence_dir = resolve_snapshot_export_path(root, SNAPSHOT_EXPORT_EVIDENCE_DIR)?;
 
     let staged_manifest = std::fs::read_to_string(&manifest_path).map_err(|e| format!("could not read {}: {e}", manifest_path.display()))?;
@@ -1185,6 +1356,25 @@ fn validate_snapshot_export_package_dir(
     let staged_report = std::fs::read_to_string(&report_path).map_err(|e| format!("could not read {}: {e}", report_path.display()))?;
     if staged_report != report_tex {
         return Err("snapshot export report.tex does not match the generated report".into());
+    }
+
+    let staged_marker = std::fs::read_to_string(&marker_path).map_err(|e| format!("could not read {}: {e}", marker_path.display()))?;
+    if staged_marker != marker_json {
+        return Err("snapshot export report.marker.json does not match the generated report".into());
+    }
+
+    match report_docx {
+        Some(bytes) => {
+            let staged_docx = std::fs::read(&report_docx_path).map_err(|e| format!("could not read {}: {e}", report_docx_path.display()))?;
+            if staged_docx != bytes {
+                return Err("snapshot export report.docx does not match the generated report".into());
+            }
+        }
+        None => {
+            if report_docx_path.exists() {
+                return Err(format!("snapshot export wrote unexpected {}", report_docx_path.display()));
+            }
+        }
     }
 
     let staged_source = std::fs::read(&source_pdf_path).map_err(|e| format!("could not read {}: {e}", source_pdf_path.display()))?;
@@ -1271,14 +1461,31 @@ fn write_snapshot_export_package_with_hooks(
     validate_snapshot_export_package_input(&input)?;
     let manifest_json = snapshot_export_manifest_json(&input.items)?;
     let report_tex = snapshot_export_report_tex(&input.items)?;
+    let marker_json = snapshot_export_marker_json(&input.items)?;
     let stage = create_snapshot_export_staging_dir(target)?;
 
     let result = (|| {
         write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_MANIFEST_PATH, manifest_json.as_bytes(), hooks)?;
         write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_SOURCE_PDF_PATH, input.source_pdf_bytes.as_slice(), hooks)?;
         write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_REPORT_PATH, report_tex.as_bytes(), hooks)?;
-        render_snapshot_export_images(&stage, &input.render_source, &input.items, hooks)?;
-        validate_snapshot_export_package_dir(&stage, input.source_pdf_bytes.as_slice(), &input.items, &manifest_json, &report_tex)?;
+        write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_MARKER_PATH, marker_json.as_bytes(), hooks)?;
+        let images = render_snapshot_export_images(&stage, &input.render_source, &input.items, hooks)?;
+        let report_docx = if input.include_word_report {
+            let bytes = snapshot_export_report_docx(&input.title, &input.items, &images)?;
+            write_snapshot_export_file(&stage, SNAPSHOT_EXPORT_REPORT_DOCX_PATH, &bytes, hooks)?;
+            Some(bytes)
+        } else {
+            None
+        };
+        validate_snapshot_export_package_dir(
+            &stage,
+            input.source_pdf_bytes.as_slice(),
+            &input.items,
+            &manifest_json,
+            &report_tex,
+            report_docx.as_deref(),
+            &marker_json,
+        )?;
         if target.exists() {
             return Err(format!("snapshot export target already exists: {}", target.display()));
         }
@@ -1313,17 +1520,54 @@ fn render_snapshot_export_item_ocr(
     Ok((!text.is_empty()).then_some(SnapshotExportOcr { text }))
 }
 
+fn snapshot_export_text_bounds_overlap(a: [f32; 4], b: ExportRect) -> bool {
+    let left = a[0].max(b.x);
+    let top = a[1].max(b.y);
+    let right = a[2].min(b.x + b.width);
+    let bottom = a[3].min(b.y + b.height);
+    right > left && bottom > top
+}
+
+fn extract_snapshot_export_item_text(
+    renderer: &mut PageRenderer,
+    source: &ExportSource,
+    item: &SnapshotExportItem,
+) -> Result<Option<SnapshotExportOcr>, String> {
+    validate_snapshot_export_page(source.pages, item.page)?;
+    let page_size = *source.sizes.get(item.page - 1).ok_or_else(|| format!("page {} display size is not available", item.page))?;
+    validate_snapshot_export_rect_on_page(page_size, item.rect)?;
+
+    let rendered = renderer.render(RenderRequest { page: item.page - 1, kind: RequestKind::Text, scale: 1.0, ..Default::default() });
+    let Some(text) = rendered.text else {
+        return Ok(None);
+    };
+
+    let words = words_with(&text, |x, y| [x, y]);
+    let text = words
+        .into_iter()
+        .filter(|(_, rect)| snapshot_export_text_bounds_overlap(*rect, item.rect))
+        .map(|(word, _)| word)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+    Ok((!text.is_empty()).then_some(SnapshotExportOcr { text }))
+}
+
 /// Populates missing OCR slots from the selected portion itself, using the shared OCR engine.
 ///
 /// v1 keeps OCR derived and report-only: callers should run this before package writing so the
 /// report can include the selected portion's OCR text without changing the manifest contract.
 pub fn populate_snapshot_export_ocr(source: &ExportSource, items: &mut [SnapshotExportItem]) -> Result<(), String> {
-    if items.iter().all(|item| item.ocr.is_some()) {
+    if items.iter().all(|item| item.ocr.is_some() || !item.allow_ocr_fill) {
         return Ok(());
     }
     let mut renderer = PageRenderer::new(source.bytes.clone(), source.config.clone());
-    for item in items.iter_mut().filter(|item| item.ocr.is_none()) {
-        item.ocr = render_snapshot_export_item_ocr(&mut renderer, source, item)?;
+    for item in items.iter_mut().filter(|item| item.ocr.is_none() && item.allow_ocr_fill) {
+        item.ocr = extract_snapshot_export_item_text(&mut renderer, source, item)?;
+        if item.ocr.is_none() && crate::ocr::available() {
+            item.ocr = render_snapshot_export_item_ocr(&mut renderer, source, item)?;
+        }
     }
     Ok(())
 }
@@ -1571,8 +1815,8 @@ mod image_name_tests {
 #[cfg(test)]
 mod snapshot_export_tests {
     use super::{
-        CropPdfRect, CropReviewItem, CropReviewStore, ExportItemKind, ExportRect, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportOcr,
-        normalize_package_relative_path, normalize_snapshot_export_items,
+        CropPdfRect, CropReviewItem, CropReviewOcrMode, CropReviewStore, ExportItemKind, ExportRect, SnapshotExportItemInput, SnapshotExportMetadata,
+        SnapshotExportOcr, normalize_package_relative_path, normalize_snapshot_export_items,
     };
     use chrono::{TimeZone, Utc};
     use pdfcraft_render::PageInfo;
@@ -1588,6 +1832,7 @@ mod snapshot_export_tests {
             rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
             metadata: metadata(caption, None),
             ocr: None,
+            allow_ocr_fill: true,
         }
     }
 
@@ -1607,6 +1852,7 @@ mod snapshot_export_tests {
             rect_pdf,
             caption: format!("caption-{id}"),
             note: Some(format!("note-{id}")),
+            ocr_mode: CropReviewOcrMode::Auto,
             ocr_text: Some(format!("ocr-{id}")),
             ocr_extracted_at: Some(timestamp(9, 15, 0)),
             created_at: timestamp(9, 0, 0),
@@ -1632,6 +1878,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: 12.0, y: 18.0, width: 22.0, height: 28.0 },
                 metadata: metadata("Typed caption", Some("Typed note")),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -1649,6 +1896,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
                 metadata: metadata("Caption", None),
                 ocr: Some(SnapshotExportOcr { text: "derived OCR".into() }),
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -1692,6 +1940,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: -1.0, y: 20.0, width: 30.0, height: 40.0 },
                 metadata: metadata("bad rect", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap_err();
@@ -1705,6 +1954,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: 10.0, y: 20.0, width: 0.0, height: 40.0 },
                 metadata: metadata("bad rect", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap_err();
@@ -1718,6 +1968,7 @@ mod snapshot_export_tests {
                 rect: ExportRect { x: f32::NAN, y: 20.0, width: 30.0, height: 40.0 },
                 metadata: metadata("bad rect", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap_err();
@@ -1768,6 +2019,7 @@ mod snapshot_export_tests {
             rect_pdf: CropPdfRect::from_user_rect([12.5, 44.0, 90.0, 120.0]).unwrap(),
             caption: "Figure caption".to_owned(),
             note: Some("Reviewer note".to_owned()),
+            ocr_mode: CropReviewOcrMode::Auto,
             ocr_text: Some("Recognized text".to_owned()),
             ocr_extracted_at: Some(timestamp(10, 5, 0)),
             created_at: timestamp(9, 55, 0),
@@ -1785,7 +2037,7 @@ mod snapshot_export_tests {
 
 #[cfg(test)]
 mod crop_review_project_tests {
-    use super::{CropPdfRect, CropReviewItem, ExportItemKind, load_crop_review_project, write_crop_review_project};
+    use super::{CropPdfRect, CropReviewItem, CropReviewOcrMode, ExportItemKind, load_crop_review_project, write_crop_review_project};
     use chrono::{TimeZone, Utc};
     use std::sync::Arc;
 
@@ -1826,6 +2078,7 @@ mod crop_review_project_tests {
             rect_pdf: CropPdfRect { left: 12.5, bottom: 44.0, right: 90.0, top: 120.0 },
             caption: caption.to_owned(),
             note: note.map(str::to_owned),
+            ocr_mode: CropReviewOcrMode::Auto,
             ocr_text: ocr_text.map(str::to_owned),
             ocr_extracted_at: ocr_text.map(|_| timestamp(10, 5, 0)),
             created_at: timestamp(9, 55, 0),
@@ -1908,6 +2161,133 @@ mod crop_review_project_tests {
 }
 
 #[cfg(test)]
+mod export_embedded_crop_review_tests {
+    use std::sync::Arc;
+
+    use chrono::{TimeZone, Utc};
+
+    use super::{CropPdfRect, CropReviewItem, CropReviewOcrMode, EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME, ExportItemKind, crop_review_store_json};
+
+    fn timestamp(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 26, hour, minute, second).single().unwrap()
+    }
+
+    fn crop(id: &str, page_number: usize) -> CropReviewItem {
+        CropReviewItem {
+            id: id.to_owned(),
+            kind: ExportItemKind::Snapshot,
+            page_number,
+            rect_pdf: CropPdfRect { left: 12.5, bottom: 44.0, right: 90.0, top: 120.0 },
+            caption: format!("caption-{id}"),
+            note: Some(format!("note-{id}")),
+            ocr_mode: CropReviewOcrMode::Auto,
+            ocr_text: Some(format!("ocr-{id}")),
+            ocr_extracted_at: Some(timestamp(10, 5, 0)),
+            created_at: timestamp(9, 55, 0),
+            updated_at: timestamp(10, 6, 0),
+        }
+    }
+
+    fn session_with(n: usize) -> (crate::Session, crate::DocId) {
+        let mut session = crate::Session::new().with_clock(|| 1_700_000_000);
+        let id = session.open("fixture.pdf", None, Arc::new(crate::tests::fixture(n)), None).unwrap();
+        (session, id)
+    }
+
+    fn attachment_keys(bytes: &Arc<Vec<u8>>) -> Vec<String> {
+        let doc = pdfcraft_cos::Document::open(bytes.clone()).unwrap();
+        pdfcraft_organize::attachment_keys(&doc)
+    }
+
+    fn embedded_fixture_with_crop_review(crops: &[CropReviewItem]) -> Arc<Vec<u8>> {
+        let mut cos = pdfcraft_cos::Document::open(Arc::new(crate::tests::fixture(2))).unwrap();
+        let json = crop_review_store_json(crops).unwrap();
+        pdfcraft_organize::add_attachment(
+            &mut cos,
+            EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME,
+            json.as_bytes(),
+            Some("PdfCraft embedded crop review workspace"),
+            pdfcraft_organize::mime_for_name(EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME),
+            Some("D:20261026100500Z"),
+        )
+        .unwrap();
+        Arc::new(pdfcraft_cos::write_full(&cos, &pdfcraft_cos::SaveOptions::default()).unwrap())
+    }
+
+    #[test]
+    fn export_open_restores_crop_review_store_from_reserved_embedded_attachment() {
+        let expected = vec![crop("crop-0001", 1), crop("crop-0002", 2)];
+        let bytes = embedded_fixture_with_crop_review(&expected);
+
+        assert!(attachment_keys(&bytes).contains(&EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME.to_owned()));
+
+        let mut session = crate::Session::new().with_clock(|| 1_700_000_000);
+        let id = session.open("embedded.pdf", None, bytes, None).unwrap();
+
+        assert_eq!(session.crop_review(id).unwrap().items(), expected.as_slice());
+    }
+
+    #[test]
+    fn export_save_and_reopen_preserve_reserved_embedded_crop_review_attachment() {
+        let expected = crop("crop-0001", 1);
+        let (mut session, id) = session_with(2);
+
+        // Crop-review mutations alone do not force a save yet, so pair the persistence check with
+        // one ordinary document edit and assert that the embedded mirror survives the round trip.
+        session.apply(id, crate::Edit::SetInfo { key: "Title".into(), value: "Crop review".into() }).unwrap();
+        session.crop_review_mut(id).unwrap().upsert(expected.clone()).unwrap();
+
+        let saved = session.save_bytes(id).unwrap();
+        assert!(attachment_keys(&saved).contains(&EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME.to_owned()));
+
+        session.mark_saved(id, saved.clone(), None).unwrap();
+        assert_eq!(session.crop_review(id).unwrap().items(), std::slice::from_ref(&expected));
+
+        let mut reopened = crate::Session::new().with_clock(|| 1_700_000_000);
+        let reopened_id = reopened.open("saved.pdf", None, saved, None).unwrap();
+        assert_eq!(reopened.crop_review(reopened_id).unwrap().items(), &[expected]);
+    }
+
+    #[test]
+    fn export_save_full_removes_reserved_embedded_attachment_when_crop_review_store_is_empty() {
+        let existing = crop("crop-0001", 1);
+        let bytes = embedded_fixture_with_crop_review(std::slice::from_ref(&existing));
+        let mut session = crate::Session::new().with_clock(|| 1_700_000_000);
+        let id = session.open("embedded.pdf", None, bytes, None).unwrap();
+
+        assert_eq!(session.crop_review(id).unwrap().items(), std::slice::from_ref(&existing));
+        assert!(session.crop_review_mut(id).unwrap().remove(&existing.id).is_some());
+        assert!(session.crop_review(id).unwrap().items().is_empty());
+
+        let saved = session.save_full_bytes(id).unwrap();
+        assert!(!attachment_keys(&saved).contains(&EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME.to_owned()));
+
+        session.mark_saved(id, saved.clone(), None).unwrap();
+        assert!(session.crop_review(id).unwrap().items().is_empty());
+
+        let mut reopened = crate::Session::new().with_clock(|| 1_700_000_000);
+        let reopened_id = reopened.open("saved.pdf", None, saved, None).unwrap();
+        assert!(reopened.crop_review(reopened_id).unwrap().items().is_empty());
+    }
+
+    #[test]
+    fn export_unchanged_documents_without_crop_review_do_not_gain_reserved_embedded_attachment() {
+        let (session, id) = session_with(1);
+        let original = session.get(id).unwrap().bytes.clone();
+
+        assert!(session.crop_review(id).unwrap().items().is_empty());
+
+        let saved = session.save_bytes(id).unwrap();
+        assert_eq!(saved, original);
+        assert!(!attachment_keys(&saved).contains(&EMBEDDED_CROP_REVIEW_ATTACHMENT_NAME.to_owned()));
+
+        let mut reopened = crate::Session::new().with_clock(|| 1_700_000_000);
+        let reopened_id = reopened.open("saved.pdf", None, saved, None).unwrap();
+        assert!(reopened.crop_review(reopened_id).unwrap().items().is_empty());
+    }
+}
+
+#[cfg(test)]
 mod snapshot_export_artifact_tests {
     use serde_json::Value;
 
@@ -1929,14 +2309,16 @@ mod snapshot_export_artifact_tests {
                     page: 4,
                     rect: ExportRect { x: 90.5, y: 244.0, width: 180.0, height: 110.0 },
                     metadata: metadata("Comment {callout} _ review", None),
-                    ocr: None,
+                    ocr: Some(SnapshotExportOcr { text: "Recognized crop text two".into() }),
+                    allow_ocr_fill: true,
                 },
                 SnapshotExportItemInput {
                     order: 10,
                     page: 2,
                     rect: ExportRect { x: 72.0, y: 128.0, width: 216.0, height: 96.0 },
                     metadata: metadata("50% approved & signed #1", Some(r"Path C:\exports\item_{1} uses ~ temp ^ dir and costs $5.")),
-                    ocr: None,
+                    ocr: Some(SnapshotExportOcr { text: "Recognized crop text one".into() }),
+                    allow_ocr_fill: true,
                 },
             ],
         )
@@ -1950,7 +2332,7 @@ mod snapshot_export_artifact_tests {
         let expected = concat!(
             "{\n",
             "  \"package_kind\": \"pdfcraft.snapshot_export\",\n",
-            "  \"manifest_version\": \"1.0\",\n",
+            "  \"manifest_version\": \"1.1\",\n",
             "  \"source_pdf\": {\n",
             "    \"path\": \"source.pdf\",\n",
             "    \"state\": \"working-copy\"\n",
@@ -1983,7 +2365,8 @@ mod snapshot_export_artifact_tests {
             "        \"height_px\": 192\n",
             "      },\n",
             "      \"caption\": \"50% approved & signed #1\",\n",
-            "      \"note\": \"Path C:\\\\exports\\\\item_{1} uses ~ temp ^ dir and costs $5.\"\n",
+            "      \"note\": \"Path C:\\\\exports\\\\item_{1} uses ~ temp ^ dir and costs $5.\",\n",
+            "      \"ocr_text\": \"Recognized crop text one\"\n",
             "    },\n",
             "    {\n",
             "      \"id\": \"item_2\",\n",
@@ -2000,7 +2383,8 @@ mod snapshot_export_artifact_tests {
             "        \"width_px\": 360,\n",
             "        \"height_px\": 220\n",
             "      },\n",
-            "      \"caption\": \"Comment {callout} _ review\"\n",
+            "      \"caption\": \"Comment {callout} _ review\",\n",
+            "      \"ocr_text\": \"Recognized crop text two\"\n",
             "    }\n",
             "  ]\n",
             "}\n"
@@ -2014,21 +2398,36 @@ mod snapshot_export_artifact_tests {
         let tex = snapshot_export_report_tex(&sample_items()).unwrap();
 
         let expected = concat!(
-            "\\section*{Snapshot Evidence}\n\n",
-            "\\begin{figure}[htbp]\n",
-            "\\centering\n",
-            "\\includegraphics[width=\\linewidth]{evidence/item_1.png}\n",
-            "\\caption{50\\% approved \\& signed \\#1}\n",
-            "\\label{fig:item_1}\n",
-            "\\end{figure}\n\n",
-            "\\paragraph{Note.}\n",
-            "Path C:\\textbackslash{}exports\\textbackslash{}item\\_\\{1\\} uses \\~{} temp \\^{} dir and costs \\$5.\n\n",
-            "\\begin{figure}[htbp]\n",
-            "\\centering\n",
-            "\\includegraphics[width=\\linewidth]{evidence/item_2.png}\n",
-            "\\caption{Comment \\{callout\\} \\_ review}\n",
-            "\\label{fig:item_2}\n",
-            "\\end{figure}\n"
+            "\\documentclass{article}\n",
+            "\\usepackage[T1]{fontenc}\n",
+            "\\usepackage[utf8]{inputenc}\n",
+            "\\usepackage{graphicx}\n",
+            "\\usepackage{caption}\n",
+            "\\usepackage{csquotes}\n",
+            "\\begin{document}\n\n",
+            "\\begin{enumerate}\n",
+            "    \\item Conforme a Figura~\\ref{fig:item_1}, Path C:\\textbackslash{}exports\\textbackslash{}item\\_\\{1\\} uses \\~{} temp \\^{} dir and costs \\$5..\n\n",
+            "\\noindent\\begin{minipage}[t]{\\linewidth}\n",
+            "    \\vspace{0pt}\n",
+            "    \\centering\n",
+            "    \\fbox{\\includegraphics[width=\\linewidth]{evidence/item_1.png}}\n",
+            "    \\captionsetup{justification=centering}\n",
+            "    \\captionof{figure}{50\\% approved \\& signed \\#1}\n",
+            "    \\label{fig:item_1}\n",
+            "\\end{minipage}\n\n",
+            "\\noindent OCR.: Recognized crop text one\n\n",
+            "    \\item Conforme a Figura~\\ref{fig:item_2}, Comment \\{callout\\} \\_ review.\n\n",
+            "\\noindent\\begin{minipage}[t]{\\linewidth}\n",
+            "    \\vspace{0pt}\n",
+            "    \\centering\n",
+            "    \\fbox{\\includegraphics[width=\\linewidth]{evidence/item_2.png}}\n",
+            "    \\captionsetup{justification=centering}\n",
+            "    \\captionof{figure}{Comment \\{callout\\} \\_ review}\n",
+            "    \\label{fig:item_2}\n",
+            "\\end{minipage}\n\n",
+            "\\noindent OCR.: Recognized crop text two\n\n",
+            "\\end{enumerate}\n\n",
+            "\\end{document}\n"
         );
 
         assert_eq!(tex, expected);
@@ -2043,13 +2442,13 @@ mod snapshot_export_artifact_tests {
         let parsed: Value = serde_json::from_str(&manifest).unwrap();
         let manifest_items = parsed["items"].as_array().unwrap();
         assert_eq!(manifest_items.len(), items.len());
-        assert_eq!(tex.matches("\\begin{figure}[htbp]").count(), items.len());
+        assert_eq!(tex.matches("\\begin{minipage}[t]{\\linewidth}").count(), items.len());
 
         for manifest_item in manifest_items {
             let id = manifest_item["id"].as_str().unwrap();
             let path = manifest_item["image"]["path"].as_str().unwrap();
             assert!(tex.contains(&format!("\\label{{fig:{id}}}")), "{id}");
-            assert!(tex.contains(&format!("\\includegraphics[width=\\linewidth]{{{path}}}")), "{id}");
+            assert!(tex.contains(&format!("\\fbox{{\\includegraphics[width=\\linewidth]{{{path}}}}}")), "{id}");
         }
     }
 
@@ -2063,12 +2462,13 @@ mod snapshot_export_artifact_tests {
                 rect: ExportRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 },
                 metadata: metadata("Caption", Some("Note text")),
                 ocr: Some(SnapshotExportOcr { text: "Derived OCR text".into() }),
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
 
         let tex = snapshot_export_report_tex(&items).unwrap();
-        assert!(tex.contains("\\paragraph{OCR.}\nDerived OCR text\n"), "{tex}");
+        assert!(tex.contains("\\noindent OCR.: Derived OCR text\n"), "{tex}");
     }
 }
 
@@ -2158,7 +2558,13 @@ mod snapshot_export_package_tests {
     }
 
     fn package_input(items: Vec<super::SnapshotExportItem>, source: ExportSource) -> SnapshotExportPackageInput {
-        SnapshotExportPackageInput { items, source_pdf_bytes: source.bytes.clone(), render_source: source }
+        SnapshotExportPackageInput {
+            items,
+            source_pdf_bytes: source.bytes.clone(),
+            render_source: source,
+            title: "Export test".into(),
+            include_word_report: false,
+        }
     }
 
     fn png_size(path: &std::path::Path) -> (u32, u32) {
@@ -2188,6 +2594,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
                 metadata: metadata("Black box", Some("One item")),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2230,6 +2637,7 @@ mod snapshot_export_package_tests {
                     rect: ExportRect { x: 90.0, y: 110.0, width: 50.0, height: 40.0 },
                     metadata: metadata("Second page", None),
                     ocr: None,
+                    allow_ocr_fill: true,
                 },
                 SnapshotExportItemInput {
                     order: 10,
@@ -2237,6 +2645,7 @@ mod snapshot_export_package_tests {
                     rect: ExportRect { x: 10.0, y: 30.0, width: 40.0, height: 30.0 },
                     metadata: metadata("First page", Some("ordered first")),
                     ocr: None,
+                    allow_ocr_fill: true,
                 },
             ],
         )
@@ -2267,6 +2676,34 @@ mod snapshot_export_package_tests {
     }
 
     #[test]
+    fn package_export_can_include_a_word_report() {
+        let source = source(&["0 0 0 rg 20 30 40 50 re f"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
+                metadata: metadata("Black box", Some("One item")),
+                ocr: None,
+                allow_ocr_fill: true,
+            }],
+        )
+        .unwrap();
+
+        let dir = TestDir::new("one-item-word");
+        let target = dir.child("package");
+        let mut input = package_input(items, source);
+        input.include_word_report = true;
+
+        write_snapshot_export_package(&target, input).unwrap();
+
+        let docx = std::fs::read(target.join("report.docx")).unwrap();
+        assert!(docx.windows(b"word/document.xml".len()).any(|w| w == b"word/document.xml"));
+        assert!(docx.windows(b"word/media/image1.png".len()).any(|w| w == b"word/media/image1.png"));
+    }
+
+    #[test]
     fn rotated_page_crop_behavior_uses_display_space_after_rotation() {
         let source = source(&["1 0 0 rg 20 40 60 30 re f 0 0 1 rg 120 40 60 30 re f"], &[[0.0, 0.0, 200.0, 100.0]], &[90]);
         let info = inspect(source.bytes.clone(), None).unwrap();
@@ -2280,6 +2717,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 40.0, y: 20.0, width: 30.0, height: 60.0 },
                 metadata: metadata("Rotated red band", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2318,6 +2756,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 20.0, y: 30.0, width: 40.0, height: 50.0 },
                 metadata: metadata("Black box", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2349,6 +2788,7 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 180.0, y: 30.0, width: 40.0, height: 50.0 },
                 metadata: metadata("Out of bounds", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
@@ -2372,19 +2812,59 @@ mod snapshot_export_package_tests {
                 rect: ExportRect { x: 10.0, y: 120.0, width: 110.0, height: 50.0 },
                 metadata: metadata("OCR crop", None),
                 ocr: None,
+                allow_ocr_fill: true,
             }],
         )
         .unwrap();
 
+        // The rectangle covers native page text, which is preferred over bitmap OCR (17649c1b), so the
+        // text is filled with or without OCR models; models only matter for regions without a text layer.
         let result = populate_snapshot_export_ocr(&source, &mut items);
-        if crate::ocr::available() {
-            let text = items[0].ocr.as_ref().map(|ocr| ocr.text.clone()).unwrap_or_default();
-            assert!(result.is_ok(), "{result:?}");
-            assert!(!text.trim().is_empty(), "{text:?}");
-        } else {
-            let err = result.unwrap_err();
-            assert!(err.contains("the text recognition models are not installed"), "{err}");
-        }
+        assert!(result.is_ok(), "{result:?}");
+        let text = items[0].ocr.as_ref().map(|ocr| ocr.text.clone()).unwrap_or_default();
+        assert!(text.contains("Page 1"), "{text:?}");
+    }
+
+    #[test]
+    fn ocr_population_prefers_native_page_text_inside_the_selected_rectangle() {
+        let source = source(&["BT /F1 24 Tf 20 150 Td (Thermal bow result) Tj ET"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let mut items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 15.0, y: 130.0, width: 170.0, height: 30.0 },
+                metadata: metadata("Text crop", None),
+                ocr: None,
+                allow_ocr_fill: true,
+            }],
+        )
+        .unwrap();
+
+        populate_snapshot_export_ocr(&source, &mut items).unwrap();
+
+        assert_eq!(items[0].ocr.as_ref().map(|ocr| ocr.text.as_str()), Some("Thermal bow result"));
+    }
+
+    #[test]
+    fn ocr_population_skips_fill_when_item_disallows_it() {
+        let source = source(&["BT /F1 24 Tf 20 150 Td (Thermal bow result) Tj ET"], &[[0.0, 0.0, 200.0, 300.0]], &[0]);
+        let mut items = normalize_snapshot_export_items(
+            source.pages,
+            vec![SnapshotExportItemInput {
+                order: 0,
+                page: 1,
+                rect: ExportRect { x: 15.0, y: 130.0, width: 170.0, height: 30.0 },
+                metadata: metadata("Text crop", None),
+                ocr: None,
+                allow_ocr_fill: false,
+            }],
+        )
+        .unwrap();
+
+        populate_snapshot_export_ocr(&source, &mut items).unwrap();
+
+        assert!(items[0].ocr.is_none());
     }
 }
 

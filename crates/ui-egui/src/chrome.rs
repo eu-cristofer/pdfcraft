@@ -69,8 +69,8 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     app.active = None;
                     app.combine_tab.focused = false;
                 }
-                // Keep the two icon buttons, Discord's text/padding and three gaps outside the scrolling tabs.
-                let controls_width = ui.fonts_mut(|f| f.layout_no_wrap("Discord".into(), theme::medium(13.0), t.text).size().x)
+                // Keep the two icon buttons, the Help button's text/padding and three gaps outside the scrolling tabs.
+                let controls_width = ui.fonts_mut(|f| f.layout_no_wrap(tl!("Help").into(), theme::medium(13.0), t.text).size().x)
                     + 2.0 * button
                     + 50.0
                     + window_controls::width(&controls.right);
@@ -302,8 +302,8 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     if icons::button(ui, "circle-help", button, false, tl!("Keyboard shortcuts")).clicked() {
                         app.dialog = Some(Dialog::Shortcuts);
                     }
-                    // One click to the community, from anywhere in the app.
-                    if widgets::ghost_button_sized(ui, "messages-square", "Discord", tab_h).on_hover_text(pdfcraft_engine::links::DISCORD).clicked() {
+                    // One click to help, from anywhere in the app.
+                    if widgets::ghost_button_sized(ui, "messages-square", tl!("Help"), tab_h).on_hover_text(pdfcraft_engine::links::HELP).clicked() {
                         app.execute("help.discord");
                     }
                 });
@@ -616,7 +616,6 @@ fn main_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                                 (RightPanel::Bookmarks, tl!("Bookmarks")),
                                 (RightPanel::Pages, tl!("Pages")),
                                 (RightPanel::Crops, tl!("Crops")),
-                                (RightPanel::Metadata, tl!("Metadata")),
                                 (RightPanel::Fields, tl!("Fields")),
                                 (RightPanel::Layers, tl!("Layers")),
                                 (RightPanel::Attachments, tl!("Attachments")),
@@ -670,7 +669,6 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
         item(RightPanel::Bookmarks, "bookmark", "Bookmarks", has(has_outline, "Has bookmarks")),
         item(RightPanel::Pages, "files", "Page thumbnails", None),
         item(RightPanel::Crops, "crop", "Crops", has(has_crops, "Has crops")),
-        item(RightPanel::Metadata, "tag", "Metadata", has(has_crops, "Has crops")),
         item(RightPanel::Fields, "text-cursor-input", "Form fields", has(has_fields, "Has form fields")),
         item(RightPanel::Layers, "layers", "Layers", has(has_layers, "Has layers")),
         item(RightPanel::Attachments, "paperclip", "Attachments", has(has_files, "Has attachments")),

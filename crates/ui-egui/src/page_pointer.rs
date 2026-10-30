@@ -266,7 +266,7 @@ mod tests {
     }
 
     /// The page modules: the per-page chain in `canvas::document_area` and what it calls.
-    const PAGE_MODULES: [&str; 18] = [
+    const PAGE_MODULES: [&str; 19] = [
         "canvas.rs",
         "comments.rs",
         "forms_ui.rs",
@@ -285,6 +285,7 @@ mod tests {
         "image_pick.rs",
         "signature_drag.rs",
         "calc_order_ui.rs",
+        "crops_panel.rs",
     ];
 
     /// egui's raw pointer state: where the pointer is, and which buttons are down or went down.

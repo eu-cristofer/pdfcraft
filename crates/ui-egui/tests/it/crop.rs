@@ -5,7 +5,7 @@ use egui::accesskit::Role;
 use egui::{Pos2, Rect, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use pdfcraft_engine::export::{CropPdfRect, CropReviewItem, ExportItemKind};
+use pdfcraft_engine::export::{CropPdfRect, CropReviewItem, CropReviewOcrMode, ExportItemKind};
 use pdfcraft_ui_egui::PdfCraftApp;
 
 use crate::support;
@@ -62,6 +62,7 @@ fn item(id: &str, page_number: usize, rect_pdf: CropPdfRect, caption: &str, seco
         rect_pdf,
         caption: caption.to_string(),
         note: None,
+        ocr_mode: CropReviewOcrMode::Auto,
         ocr_text: None,
         ocr_extracted_at: None,
         created_at: stamp(seconds),
@@ -91,6 +92,12 @@ fn field<'a>(h: &'a Harness<'static, PdfCraftApp>, label: &'a str) -> egui_kitte
         .unwrap_or_else(|| panic!("no field {label:?}"))
 }
 
+fn label<'a>(h: &'a Harness<'static, PdfCraftApp>, text: &'a str) -> egui_kittest::Node<'a> {
+    // kittest's label query, not a raw `node.label()` comparison: egui exposes a text label's text so that only the
+    // former finds it.
+    h.query_all_by_label(text).next().unwrap_or_else(|| panic!("no label {text:?}"))
+}
+
 fn crop_center(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: CropPdfRect) -> Pos2 {
     let page = h.state().views[0].page_screen_rect(page_number - 1).expect("page on screen");
     let x = ((rect.left + rect.right) * 0.5) / 300.0 * page.width();
@@ -105,6 +112,27 @@ fn click(h: &mut Harness<'static, PdfCraftApp>, p: Pos2) {
     h.run_steps(1);
     h.drop_at(p);
     h.run_steps(3);
+}
+
+fn drag(h: &mut Harness<'static, PdfCraftApp>, from: Pos2, to: Pos2) {
+    h.hover_at(from);
+    h.run_steps(1);
+    h.drag_at(from);
+    h.run_steps(1);
+    for k in 1..=4 {
+        h.hover_at(from + (to - from) * (k as f32 / 4.0));
+        h.run_steps(1);
+    }
+    h.drop_at(to);
+    h.run_steps(4);
+}
+
+fn crop_corner(h: &Harness<'static, PdfCraftApp>, page_number: usize, rect: CropPdfRect, right: bool, top: bool) -> Pos2 {
+    let page = h.state().views[0].page_screen_rect(page_number - 1).expect("page on screen");
+    let x = if right { rect.right } else { rect.left } / 300.0 * page.width();
+    let y_pdf = if top { rect.top } else { rect.bottom };
+    let y = (400.0 - y_pdf) / 400.0 * page.height();
+    pos2(page.left() + x, page.top() + y)
 }
 
 #[test]
@@ -165,6 +193,50 @@ fn crops_panel_secondary_line_shows_kind_and_page_number() {
 }
 
 #[test]
+fn crops_header_menu_opens_export_dialog() {
+    let mut h = harness(|app| {
+        seed(app, [item("exportable", 1, CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 }, "Named crop", 10)]);
+        app.set_option("panel", "crops").unwrap();
+    });
+
+    h.get_by_label("More options").click();
+    h.run_steps(2);
+    h.get_by_label("Export Crop Review Package").click();
+    h.run_steps(3);
+
+    assert!(matches!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Export(_))));
+}
+
+#[test]
+fn hide_all_crops_hides_overlays_but_keeps_the_panel_items() {
+    let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
+    let mut h = harness(move |app| {
+        seed(app, [item("hidden", 1, rect, "Hidden crop", 10)]);
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("hidden");
+    });
+
+    crop_row(&h, "Hidden crop Snapshot · Page 1");
+
+    h.get_by_label("More options").click();
+    h.run_steps(2);
+    h.get_by_label("Hide all crops").click();
+    h.run_steps(3);
+
+    crop_row(&h, "Hidden crop Snapshot · Page 1");
+    label(&h, "Crop rectangles are hidden on the page.");
+
+    let center = crop_center(&h, 1, rect);
+    h.hover_at(center);
+    h.run_steps(1);
+    h.drag_at(center);
+    h.run_steps(1);
+    h.drop_at(center);
+    h.run_steps(2);
+    assert_eq!(h.state().views[0].selected_crop(), Some("hidden"), "hidden overlays do not clear selection or delete rows");
+}
+
+#[test]
 fn selecting_from_the_crops_panel_selects_the_overlay_item_and_updates_metadata() {
     let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
     let mut h = harness(move |app| {
@@ -186,8 +258,6 @@ fn selecting_from_the_crops_panel_selects_the_overlay_item_and_updates_metadata(
     assert_eq!(h.state().views[0].selected_crop(), Some("captioned"));
     assert!(h.state().views[0].flash.is_some(), "selecting from the list flashes the overlay rectangle");
 
-    h.state_mut().set_option("panel", "metadata").unwrap();
-    h.run_steps(3);
     assert_eq!(field(&h, "Caption").value().as_deref(), Some("Named crop"));
     assert_eq!(field(&h, "Note").value().as_deref(), Some("First note"));
 }
@@ -213,8 +283,6 @@ fn selecting_from_the_overlay_selects_the_crops_row_and_updates_metadata() {
     assert_eq!(h.state().views[0].selected_crop(), Some("overlay-hit"));
     crop_row(&h, "Overlay crop Snapshot · Page 1");
 
-    h.state_mut().set_option("panel", "metadata").unwrap();
-    h.run_steps(3);
     assert_eq!(field(&h, "Caption").value().as_deref(), Some("Overlay crop"));
     assert_eq!(field(&h, "Note").value().as_deref(), Some("Overlay note"));
 }
@@ -231,7 +299,7 @@ fn metadata_edits_update_the_selected_crop_without_oscillating_selection_state()
             crop.note = Some("Old note".into());
             store.upsert(crop).expect("updated crop");
         }
-        app.set_option("panel", "metadata").unwrap();
+        app.set_option("panel", "crops").unwrap();
         app.views[0].select_crop("editable");
     });
 
@@ -272,9 +340,92 @@ fn creating_a_crop_rectangle_appears_in_overlay_crops_and_metadata() {
     assert_eq!(h.state().views[0].selected_crop(), Some(created.id.as_str()));
 
     crop_row(&h, "Page 1 Snapshot · Page 1");
-    h.state_mut().set_option("panel", "metadata").unwrap();
-    h.run_steps(3);
     assert_eq!(field(&h, "Caption").value().as_deref(), Some(""));
+}
+
+#[test]
+fn deleting_a_selected_crop_removes_it_and_selects_the_next_crop() {
+    let mut h = harness(|app| {
+        seed(
+            app,
+            [
+                item("crop-0001", 1, CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 }, "First", 10),
+                item("crop-0002", 2, CropPdfRect { left: 30.0, bottom: 240.0, right: 90.0, top: 320.0 }, "Second", 20),
+            ],
+        );
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("crop-0001");
+    });
+
+    h.get_by_label("More").click();
+    h.run_steps(2);
+    h.get_by_label("Delete").click();
+    h.run_steps(3);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    assert!(doc.crop_review().get("crop-0001").is_none());
+    assert_eq!(h.state().views[0].selected_crop(), Some("crop-0002"));
+    assert_eq!(field(&h, "Caption").value().as_deref(), Some("Second"));
+}
+
+#[test]
+fn delete_key_removes_the_selected_crop() {
+    let mut h = harness(|app| {
+        seed(app, [item("crop-0001", 1, CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 }, "First", 10)]);
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("crop-0001");
+    });
+
+    h.key_press(egui::Key::Delete);
+    h.run_steps(3);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    assert!(doc.crop_review().items().is_empty());
+    assert_eq!(h.state().views[0].selected_crop(), None);
+}
+
+#[test]
+fn dragging_a_selected_crop_moves_its_rectangle() {
+    let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
+    let mut h = harness(move |app| {
+        seed(app, [item("move", 1, rect, "Move me", 10)]);
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("move");
+    });
+
+    let from = crop_center(&h, 1, rect);
+    let to = from + egui::vec2(24.0, 20.0);
+    drag(&mut h, from, to);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    let moved = doc.crop_review().get("move").expect("moved crop");
+    assert!(moved.rect_pdf.left > rect.left, "left should move right");
+    assert!(moved.rect_pdf.top < rect.top, "top should move down on screen drag");
+    assert_eq!(h.state().views[0].selected_crop(), Some("move"));
+}
+
+#[test]
+fn dragging_a_corner_handle_resizes_the_selected_crop() {
+    let rect = CropPdfRect { left: 24.0, bottom: 280.0, right: 84.0, top: 360.0 };
+    let mut h = harness(move |app| {
+        seed(app, [item("resize", 1, rect, "Resize me", 10)]);
+        app.set_option("panel", "crops").unwrap();
+        app.views[0].select_crop("resize");
+    });
+
+    let from = crop_corner(&h, 1, rect, true, true);
+    let to = from + egui::vec2(28.0, -24.0);
+    drag(&mut h, from, to);
+
+    let id = h.state().active_ids().expect("active document").1;
+    let doc = h.state().session.get(id).expect("document");
+    let resized = doc.crop_review().get("resize").expect("resized crop");
+    assert!(resized.rect_pdf.right > rect.right, "right edge should expand");
+    assert!(resized.rect_pdf.top > rect.top, "top edge should expand upward");
+    assert_eq!(h.state().views[0].selected_crop(), Some("resize"));
 }
 
 #[test]
@@ -290,7 +441,7 @@ fn snapshot_tool_still_copies_pixels_and_does_not_open_crop_review_flow() {
     let id = h.state().active_ids().expect("active document").1;
     let doc = h.state().session.get(id).expect("document");
     assert!(doc.crop_review().items().is_empty(), "snapshot did not create crop-review items");
-    assert!(h.state().export_draft.snapshot_package.is_some(), "snapshot kept its export dialog flow");
+    assert!(!matches!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Export(_))), "snapshot stayed copy-only");
 }
 
 #[test]
@@ -343,11 +494,28 @@ fn crop_review_project_save_and_reopen_restores_workspace_state() {
     crop_row(&h, "第二 Snapshot · Page 1");
     crop_row(&h, "Résumé Snapshot · Page 2");
 
-    h.state_mut().set_option("panel", "metadata").unwrap();
+    h.state_mut().set_option("panel", "crops").unwrap();
     h.state_mut().views[0].select_crop("crop-0001");
     h.run_steps(3);
     assert_eq!(field(&h, "Caption").value().as_deref(), Some("第二"));
     assert_eq!(field(&h, "Note").value().as_deref(), Some("ação"));
 
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn crop_review_export_destination_and_word_option_persist() {
+    let mut app = PdfCraftApp::new();
+    app.export_draft.destination_dir = "/tmp/pdfcraft-export-parent".into();
+    app.export_draft.package_dir_name = "custom-package-name".into();
+    app.export_draft.include_word_report = true;
+
+    let saved = app.persist();
+
+    let mut restored = PdfCraftApp::new();
+    restored.restore(&saved);
+
+    assert_eq!(restored.export_draft.destination_dir, "/tmp/pdfcraft-export-parent");
+    assert_eq!(restored.export_draft.package_dir_name, "custom-package-name");
+    assert!(restored.export_draft.include_word_report);
 }

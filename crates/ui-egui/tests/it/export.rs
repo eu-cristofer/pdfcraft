@@ -1,8 +1,7 @@
 //! Export a PDF ▸ Image and Text from the real shell (egui_kittest).
 
-use egui::accesskit::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT, Queryable};
+use egui_kittest::kittest::Queryable;
 use pdfcraft_ui_egui::PdfCraftApp;
 
 const FIXTURE: &[u8] = b"%PDF-1.7
@@ -80,7 +79,7 @@ fn export_dialogs_write_images_and_text() {
 }
 
 #[test]
-fn snapshot_marquee_opens_package_export_and_writes_engine_package() {
+fn snapshot_marquee_copies_pixels_without_opening_package_export() {
     let dir = dir("snapshot");
     let mut h = harness(dir.clone());
 
@@ -90,41 +89,9 @@ fn snapshot_marquee_opens_package_export_and_writes_engine_package() {
     let to = at(&h, 90.0, 35.0);
     drag(&mut h, from, to);
 
-    h.get_by_label("Export Snapshot Package");
-    assert!(h.get_by_label("Export").accesskit_node().is_disabled(), "caption is required");
-
-    h.get_by_role_and_label(Role::TextInput, "Caption").click();
-    h.get_by_role_and_label(Role::TextInput, "Caption").type_text("Desk rectangle");
-    h.run_steps(1);
-    h.get_by_role_and_label(Role::TextInput, "Note").click();
-    h.get_by_role_and_label(Role::TextInput, "Note").type_text("Typed from the desktop flow.");
-    h.run_steps(1);
-
-    h.get_by_label("Export").click();
-    h.run_steps(6);
-
-    if !pdfcraft_engine::ocr::available() {
-        assert!(!dir.join("doc_snapshot_package").exists());
-        return;
-    }
-
-    let package = dir.join("doc_snapshot_package");
-    assert!(package.is_dir());
-    assert!(package.join("manifest.json").is_file());
-    assert!(package.join("report.tex").is_file());
-    assert!(package.join("source.pdf").is_file());
-    assert!(package.join("evidence/item_1.png").is_file());
-
-    let manifest = std::fs::read_to_string(package.join("manifest.json")).unwrap();
-    assert!(manifest.contains("\"caption\": \"Desk rectangle\""));
-    assert!(manifest.contains("\"note\": \"Typed from the desktop flow.\""));
-
-    let report = std::fs::read_to_string(package.join("report.tex")).unwrap();
-    assert!(report.contains("\\label{fig:item_1}"));
-    assert!(report.contains("Desk rectangle"));
-    if pdfcraft_engine::ocr::available() {
-        assert!(report.contains("\\paragraph{OCR.}"), "{report}");
-    }
+    assert!(h.state().last_snapshot.is_some(), "snapshot pixels were copied");
+    assert!(!matches!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Export(_))), "snapshot stayed copy-only");
+    assert!(!dir.join("doc_snapshot_package").exists(), "snapshot did not write an export package");
 }
 
 #[test]
@@ -142,6 +109,7 @@ fn crop_review_export_uses_stored_items_not_a_transient_marquee() {
                 rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 20.0, bottom: 10.0, right: 90.0, top: 60.0 },
                 caption: "Second stored crop".into(),
                 note: Some("second".into()),
+                ocr_mode: pdfcraft_engine::export::CropReviewOcrMode::Auto,
                 ocr_text: None,
                 ocr_extracted_at: None,
                 created_at: chrono::Utc::now(),
@@ -156,6 +124,7 @@ fn crop_review_export_uses_stored_items_not_a_transient_marquee() {
                 rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 10.0, bottom: 20.0, right: 80.0, top: 70.0 },
                 caption: "First stored crop".into(),
                 note: Some("first".into()),
+                ocr_mode: pdfcraft_engine::export::CropReviewOcrMode::Auto,
                 ocr_text: None,
                 ocr_extracted_at: None,
                 created_at: chrono::Utc::now(),
@@ -166,18 +135,24 @@ fn crop_review_export_uses_stored_items_not_a_transient_marquee() {
     h.state_mut().set_option("dialog", "export-crop-review-package").unwrap();
     h.run_steps(2);
     h.get_by_label("Export Crop Review Package");
+    h.get_by_label("Also write report.docx").click();
+    h.run_steps(1);
     h.get_by_label("Export").click();
     h.run_steps(6);
 
     let package = dir.join("doc_crop_review_package");
     assert!(package.is_dir());
+    assert!(package.join("report.docx").is_file());
     let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(package.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["items"][0]["caption"], "First stored crop");
     assert_eq!(manifest["items"][1]["caption"], "Second stored crop");
     let report = std::fs::read_to_string(package.join("report.tex")).unwrap();
-    if pdfcraft_engine::ocr::available() {
-        assert!(report.contains("\\paragraph{OCR.}"), "{report}");
-    } else {
-        assert!(!report.contains("\\paragraph{OCR.}"), "{report}");
-    }
+    // The fixture's pages are blank, so no crop has text, with or without the OCR models: a
+    // model that "reads" a blank crop (as mismatched models did, D-017) fails here.
+    assert!(!report.contains("\\noindent OCR.:"), "{report}");
+    let marker: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(package.join("report.marker.json")).unwrap()).unwrap();
+    assert_eq!(marker["items"][0]["caption"], "First stored crop");
+    assert!(!marker["items"][0]["ocr_text"].is_string(), "{}", marker["items"][0]);
+    let docx = std::fs::read(package.join("report.docx")).unwrap();
+    assert!(docx.windows(b"word/document.xml".len()).any(|w| w == b"word/document.xml"));
 }

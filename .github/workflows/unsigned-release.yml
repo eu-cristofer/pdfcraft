@@ -18,6 +18,10 @@ on:
       tag:
         description: "Release tag to create, e.g. v0.8.0-unsigned"
         required: true
+      publish:
+        description: "Publish the GitHub Release (off: build only, artifacts stay on the run)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -27,7 +31,11 @@ env:
 
 jobs:
   macos:
-    runs-on: macos-14 # normal tier; macos-15-xlarge (used by release.yml) needs a paid large-runner plan
+    # Standard arm64 tier. macos-14 stopped acquiring hosted runners (run 40854286030);
+    # macos-15-xlarge (used by release.yml) needs a paid large-runner plan.
+    runs-on: macos-15
+    env:
+      PDFCRAFT_VERSION: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -38,6 +46,18 @@ jobs:
           key: macos-universal
       - name: Build and package (ad-hoc signed)
         run: packaging/macos/package.sh --arch universal
+      # OCR must work from what ships: the CLI zip (models/ beside the binary) and the .app in the
+      # dmg (Contents/Resources/models; the CLI copied into Contents/MacOS uses the same lookup).
+      - name: OCR smoke test (packaged)
+        run: |
+          cli_dir="$RUNNER_TEMP/cli" app_dir="$RUNNER_TEMP/app" mnt="$RUNNER_TEMP/dmg"
+          ditto -x -k dist/release/pdfcraft-cli-*-macos-universal.zip "$cli_dir"
+          cli="$(echo "$cli_dir"/*/pdfcraft-cli)"
+          packaging/ocr-smoke.sh "$cli"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" dist/release/pdfcraft-*-macos-universal.dmg
+          mkdir -p "$app_dir" && cp -R "$mnt"/*.app "$app_dir"/ && hdiutil detach "$mnt"
+          bundle="$(echo "$app_dir"/*.app)"
+          cp "$cli" "$bundle/Contents/MacOS/" && packaging/ocr-smoke.sh "$bundle/Contents/MacOS/pdfcraft-cli"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-build
@@ -46,28 +66,56 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      # Static CRT so the .exe runs without the Visual C++ redistributable installed.
-      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+      # Same craft-fonts revision as the official release.yml: embeds the Japanese UI fonts and
+      # ships their OFL notices beside the binaries.
+      CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+      PDFCRAFT_VERSION: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          path: craft-fonts
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: windows-x64
-      - name: Build
-        run: cargo build --release -p pdfcraft -p pdfcraft-cli
-      - name: Zip
+      # package.ps1 always builds the MSI too (and checks it with test-msi.ps1), so it needs WiX.
+      - name: Install WiX v5
+        run: dotnet tool install --global wix --version 5.0.2
+      # The supported packaging path: static CRT, PE checks, OCR models (`cargo xtask models`,
+      # SHA-256 verified) in models\, portable.txt, licences and font notices. Unsigned: sign.ps1
+      # warns and skips when no signing secrets are set.
+      - name: Build and package (portable)
+        shell: pwsh
+        run: pwsh packaging/windows/package.ps1 -Arch x64
+      # Only the portable zip is published. The MSI has its own UpgradeCode since sprint 5 (it can't
+      # replace an installed upstream PdfCraft), but it ships after v0.1.
+      - name: List the portable zip
         shell: pwsh
         run: |
-          Compress-Archive -Path target/release/pdfcraft.exe, target/release/pdfcraft-cli.exe `
-            -DestinationPath pdfcraft-windows-x64.zip
+          $zip = Get-Item dist/release/*-portable.zip
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [IO.Compression.ZipFile]::OpenRead($zip.FullName).Entries | Select-Object -ExpandProperty FullName
+      # OCR must work from what ships: the extracted portable zip, models\ beside the exes.
+      # `shell: bash` is Git Bash on Windows runners (a bare `bash` from pwsh can be WSL's).
+      - name: OCR smoke test (portable zip)
+        shell: bash
+        run: |
+          dir="$RUNNER_TEMP/portable"
+          unzip -q dist/release/*-portable.zip -d "$dir"
+          packaging/ocr-smoke.sh "$(find "$dir" -name pdfcraft-cli.exe | head -n 1)"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-build
-          path: pdfcraft-windows-x64.zip
+          path: dist/release/*-portable.zip
 
   release:
     needs: [macos, windows]
+    if: inputs.publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -88,15 +136,18 @@ jobs:
 
           - Commit: ${{ github.sha }}
           - macOS: ad-hoc signed, universal (Apple Silicon + Intel). Gatekeeper will block it on
-            launch; right-click the app → Open (or \`xattr -dr com.apple.quarantine PdfCraft.app\`
+            launch; right-click the app → Open (or \`xattr -dr com.apple.quarantine "WitnessPoint PDF Review.app"\`
             after extracting from the .dmg).
-          - Windows: unsigned, x64, no installer (plain \`.exe\`s in the zip). SmartScreen will warn
-            on first run — "More info" → "Run anyway".
+          - Windows: unsigned, x64, portable zip: extract it anywhere and run pdfcraft.exe, no admin
+            rights needed. Settings stay next to the exe (portable.txt), and the OCR models are in
+            models\\. SmartScreen will warn on first run: "More info", then "Run anyway".
+          - OCR (Scan & OCR, crop export \`ocr_text\`) works offline in both builds: the models ship
+            inside them, and CI OCR-tested each package before publishing.
           - No Linux, FreeBSD or web build in this release.
           EOF
           gh release create "$TAG" \
             --repo "${{ github.repository }}" \
-            --title "Unsigned dev build ($TAG)" \
+            --title "WitnessPoint PDF Review — unsigned build ($TAG)" \
             --prerelease \
             --notes-file notes.md \
             assets/macos/* assets/windows/*

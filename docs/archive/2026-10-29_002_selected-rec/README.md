@@ -20,7 +20,7 @@ Each run MUST:
 8. When all sprints are checked, mark the project `Status: ready to archive` and
    archive it later with `/sprint-loop archive <project>`.
 
-Status: active
+Status: superseded (2026-10-29): sprints 1–2 done; the remaining sprints were replaced by 003_export-flow and 004_crop-review-workspace (rectangle-driven export and the crop-review workspace), see docs/fork/selected-rectangle-export.md
 
 - [x] [Sprint 1 — Product contract and source mapping](./sprint-1.md) — done 2026-10-26
 - [x] [Sprint 2 — Engine bridge from rectangle comments to snapshot export items](./sprint-2.md) — done 2026-10-26

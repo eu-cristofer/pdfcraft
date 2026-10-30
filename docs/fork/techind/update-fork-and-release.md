@@ -25,7 +25,7 @@ git remote add upstream https://github.com/storytold/pdfcraft.git
 ## 2. Sync this fork's `main` with upstream
 
 This fork's `main` is **not** a pure mirror — it carries commits upstream doesn't have
-(`.github/workflows/unsigned-release.yml`, `docs/techind/`). That means a fast-forward won't
+(`.github/workflows/unsigned-release.yml`, `docs/fork/techind/`). That means a fast-forward won't
 work; this is a real merge.
 
 ```sh
@@ -89,12 +89,14 @@ commit SHA to disambiguate: `TAG="${TAG}.$(git rev-parse --short HEAD)"`.
 
 **Web UI:**
 1. `https://github.com/eu-cristofer/pdfcraft/actions/workflows/unsigned-release.yml`
-2. "Run workflow" → branch `main` → tag input: the `$TAG` value from above → "Run workflow"
+2. "Run workflow" → branch `main` → tag input: the `$TAG` value from above → tick "Publish the
+   GitHub Release" → "Run workflow". Leave it unticked for a build-only check (e.g. from a
+   feature branch): the macOS and Windows artifacts then stay on the run and nothing is published.
 
 **`gh` CLI** (needs `gh auth login` once, interactively — an agent cannot complete that part):
 
 ```sh
-gh workflow run unsigned-release.yml --repo eu-cristofer/pdfcraft -f tag="$TAG"
+gh workflow run unsigned-release.yml --repo eu-cristofer/pdfcraft -f tag="$TAG" -f publish=true
 gh run watch --repo eu-cristofer/pdfcraft   # follow the run live; exits non-zero if it fails
 ```
 

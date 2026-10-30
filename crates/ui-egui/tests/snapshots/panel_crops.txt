@@ -1,0 +1,21 @@
+Label = "Crops"
+Label = "1"
+Button "Close" [off]
+Button "More options" [off]
+Button "Draw crop"
+ListItem "Desk rectangle Snapshot · Page 1" [on]
+Label = "Desk rectangle"
+Label = "Snapshot · Page 1"
+Label = "Desk rectangle"
+Label = "Snapshot · Page 1"
+Button "More" [off]
+Label = "Caption"
+TextInput "Caption" = "Desk rectangle"
+Label = "Note"
+MultilineTextInput "Note" = "Reporter header"
+Label = "OCR"
+ComboBox "OCR" = "Skip"
+Label = "OCR skipped"
+Label = "Kind: Snapshot"
+Label = "Page: 1"
+Label = "Area: 24.0, 120.0, 108.0, 180.0"

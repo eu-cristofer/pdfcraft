@@ -7,7 +7,7 @@ use std::{io, path::Path};
 
 const OPEN_WITH: &str = "com.apple.LaunchServices.OpenWith";
 const QUARANTINE: &str = "com.apple.quarantine";
-const BUNDLE_ID: &str = "ai.storyteller.pdfcraft";
+const BUNDLE_ID: &str = "com.costainspection.witnesspoint-pdf";
 const MAX_ATTRIBUTE: usize = 64 * 1024;
 
 /// A bounded snapshot used only to decide whether native association recovery is eligible.
@@ -348,12 +348,13 @@ mod tests {
     /// Check a real captured native binding and the packaged application identity.
     #[test]
     fn native_binding_and_packaging_identity_match() {
-        // Captured via Apple's API on a synthetic PDF on macOS 27.0.1. Contains only the
-        // public installed bundle path, identifier and schema version; no document data.
-        let hex = "62706c6973743030d30102030405065776657273696f6e54706174685f101062756e646c656964656e74696669657210005f101a2f4170706c69636174696f6e732f50646643726166742e6170705f101761692e73746f727974656c6c65722e7064666372616674080f171c2f314e0000000000000101000000000000000700000000000000000000000000000068";
+        // Captured via Apple's API on a synthetic PDF on macOS 27.0.1, then re-encoded as the same
+        // binary plist (keys version, path, bundleidentifier, in that order) with this fork's
+        // bundle path and identifier. Contains no document data.
+        let hex = "62706c6973743030d30102030405065776657273696f6e54706174685f101062756e646c656964656e74696669657210005f10292f4170706c69636174696f6e732f5769746e657373506f696e7420504446205265766965772e6170705f1024636f6d2e636f737461696e7370656374696f6e2e7769746e657373706f696e742d706466080f171c2f315d0000000000000101000000000000000700000000000000000000000000000084";
         let captured: Vec<u8> =
             hex.as_bytes().as_chunks::<2>().0.iter().map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap()).collect();
-        assert!(points_to_this_app(&captured, Path::new("/Applications/PdfCraft.app")));
+        assert!(points_to_this_app(&captured, Path::new("/Applications/WitnessPoint PDF Review.app")));
         let package = plist::from_bytes::<plist::Value>(include_bytes!("../../../packaging/macos/Info.plist.in")).unwrap();
         assert_eq!(package.as_dictionary().unwrap().get("CFBundleIdentifier").unwrap().as_string(), Some(BUNDLE_ID));
     }

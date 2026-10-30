@@ -36,6 +36,7 @@ mod a11y_ui;
 mod actions_ui;
 mod all_tools_ui;
 mod appearance;
+pub mod branding;
 mod calc_order_ui;
 pub mod canvas;
 mod chrome;
@@ -56,6 +57,7 @@ mod create_multiple_ui;
 mod create_ui;
 mod credits;
 mod crop;
+mod crop_review_ocr;
 mod crop_review_ui;
 mod crops_panel;
 mod drag_pointer;
@@ -65,7 +67,6 @@ mod js_ui;
 mod macos_association;
 mod marks_ui;
 mod measure_ui;
-mod metadata_panel;
 mod ocr_ui;
 mod optimize_ui;
 mod search_ui;
@@ -213,6 +214,7 @@ pub enum RightPanel {
     Bookmarks,
     Pages,
     Crops,
+    /// Legacy persisted value: restored as `Crops`.
     Metadata,
     Fields,
     Layers,
@@ -842,6 +844,7 @@ pub struct PdfCraftApp {
     pub ocr_draft: ocr_ui::OcrDraft,
     pub ocr_run: Option<ocr_ui::OcrRun>,
     pub ocr_batch: Option<std::sync::Arc<std::sync::Mutex<ocr_ui::BatchProgress>>>,
+    pub crop_review_ocr_run: Option<crop_review_ocr::CropReviewOcrRun>,
     /// Background jobs (OCR, actions, listing pinned folders) run inline instead (tests).
     pub run_inline: bool,
     /// Action Wizard: the user's actions, the dialog state, the running action and (tests) the
@@ -1219,6 +1222,7 @@ impl PdfCraftApp {
             ocr_draft: ocr_ui::OcrDraft::default(),
             ocr_run: None,
             ocr_batch: None,
+            crop_review_ocr_run: None,
             run_inline: false,
             custom_actions: Vec::new(),
             wizard: Default::default(),
@@ -2697,6 +2701,9 @@ impl PdfCraftApp {
         v["organize_zoom"] = serde_json::json!(self.organize_zoom);
         // Canonical names survive changes to the order of PAPERS and do not depend on UI language.
         v["print_paper"] = serde_json::json!(pdfcraft_engine::print::PAPERS.get(self.print_draft.paper).map(|(name, _)| *name));
+        v["export_destination_dir"] = serde_json::json!(self.export_draft.destination_dir);
+        v["export_package_dir_name"] = serde_json::json!(self.export_draft.package_dir_name);
+        v["export_include_word_report"] = serde_json::Value::Bool(self.export_draft.include_word_report);
         v.to_string()
     }
 
@@ -2776,6 +2783,15 @@ impl PdfCraftApp {
             .and_then(|name| pdfcraft_engine::print::PAPERS.iter().position(|(canonical, _)| *canonical == name))
         {
             self.print_draft.paper = paper;
+        }
+        if let Some(dir) = v["export_destination_dir"].as_str() {
+            self.export_draft.destination_dir = dir.to_string();
+        }
+        if let Some(name) = v["export_package_dir_name"].as_str() {
+            self.export_draft.package_dir_name = name.to_string();
+        }
+        if let Some(include) = v["export_include_word_report"].as_bool() {
+            self.export_draft.include_word_report = include;
         }
         if let Some(on) = v["highlight_fields"].as_bool() {
             self.view_defaults.highlight_fields = on;
@@ -2924,7 +2940,7 @@ impl PdfCraftApp {
                     "bookmarks" => Some(RightPanel::Bookmarks),
                     "pages" => Some(RightPanel::Pages),
                     "crops" => Some(RightPanel::Crops),
-                    "metadata" => Some(RightPanel::Metadata),
+                    "metadata" => Some(RightPanel::Crops),
                     "fields" => Some(RightPanel::Fields),
                     "layers" => Some(RightPanel::Layers),
                     "attachments" => Some(RightPanel::Attachments),
@@ -3551,6 +3567,8 @@ impl eframe::App for PdfCraftApp {
     /// the quit guard, shortcuts, and the background jobs' results.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ctx = Some(ctx.clone());
+        // Start each frame with a visible stock cursor; active tools may override it later.
+        ctx.set_cursor_icon(egui::CursorIcon::Default);
         #[cfg(not(target_arch = "wasm32"))]
         self.window_state.repair(ctx);
         self.dialog_epoch();
@@ -3709,6 +3727,7 @@ impl eframe::App for PdfCraftApp {
             }
         }
         self.poll_export();
+        self.poll_crop_review_ocr();
         self.auto_ocr_scanned_page();
         self.poll_ocr();
         self.poll_optimize();
@@ -3742,7 +3761,7 @@ impl eframe::App for PdfCraftApp {
             .active
             .and_then(|i| crate::canvas::tab_label(self, i))
             .or_else(|| self.combine_showing().then(|| tl!("Combine files").to_owned()))
-            .map_or_else(|| "PdfCraft".to_owned(), |name| format!("{name} — PdfCraft"));
+            .map_or_else(|| crate::branding::APP_NAME.to_owned(), |name| format!("{name} — {}", crate::branding::APP_NAME));
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;

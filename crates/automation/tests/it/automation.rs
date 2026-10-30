@@ -758,13 +758,6 @@ fn snapshot_package_export_through_tools() {
             "note": "One item"
         }]
     });
-    if !pdfcraft_engine::ocr::available() {
-        assert!(matches!(
-            a.call("doc_export_snapshot_package", &args),
-            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
-        ));
-        return;
-    }
     let result = ok(&mut a, "doc_export_snapshot_package", args);
     assert_eq!(result["count"], 1);
     assert_eq!(result["items"][0]["id"], "item_1");
@@ -780,14 +773,48 @@ fn snapshot_package_export_through_tools() {
     assert_eq!(manifest["items"][0]["page"], 1);
     assert_eq!(manifest["items"][0]["caption"], "Page 1 crop");
     assert_eq!(manifest["items"][0]["note"], "One item");
+    assert_eq!(manifest["items"][0]["ocr_text"].is_string(), pdfcraft_engine::ocr::available());
     assert_eq!(manifest["items"][0]["image"]["path"], "evidence/item_1.png");
 
     let report = std::fs::read_to_string(root.join("report.tex")).unwrap();
     assert!(report.contains("\\label{fig:item_1}"));
-    assert!(report.contains("\\caption{Page 1 crop}"));
+    assert!(report.contains("\\captionof{figure}{Page 1 crop}"));
     if pdfcraft_engine::ocr::available() {
-        assert!(report.contains("\\paragraph{OCR.}"), "{report}");
+        assert!(report.contains("\\noindent OCR.:"), "{report}");
     }
+    let marker: Value = serde_json::from_str(&std::fs::read_to_string(root.join("report.marker.json")).unwrap()).unwrap();
+    assert_eq!(marker["items"][0]["caption"], "Page 1 crop");
+    assert_eq!(marker["items"][0]["ocr_text"].is_string(), pdfcraft_engine::ocr::available());
+}
+
+#[test]
+fn crop_review_package_export_can_also_write_word_report() {
+    let dir = workdir("crop-review-package-word");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    {
+        let store = a.session_mut().crop_review_mut(pdfcraft_engine::DocId(doc)).unwrap();
+        store
+            .upsert(pdfcraft_engine::export::CropReviewItem {
+                id: "crop-0001".into(),
+                kind: pdfcraft_engine::export::ExportItemKind::Snapshot,
+                page_number: 1,
+                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 10.0, bottom: 60.0, right: 90.0, top: 140.0 },
+                caption: "First page".into(),
+                note: Some("First in canonical order".into()),
+                ocr_mode: pdfcraft_engine::export::CropReviewOcrMode::Auto,
+                ocr_text: None,
+                ocr_extracted_at: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+    }
+    let args = json!({ "doc": doc, "out": "package", "word": true });
+    ok(&mut a, "doc_export_crop_review_package", args);
+
+    let docx = std::fs::read(dir.join("package/report.docx")).unwrap();
+    assert!(docx.windows(b"word/document.xml".len()).any(|w| w == b"word/document.xml"));
 }
 
 #[test]
@@ -803,13 +830,6 @@ fn snapshot_package_export_keeps_request_order_for_multiple_items() {
             { "page": 1, "rect": [20, 30, 80, 90], "caption": "First page" }
         ]
     });
-    if !pdfcraft_engine::ocr::available() {
-        assert!(matches!(
-            a.call("doc_export_snapshot_package", &args),
-            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
-        ));
-        return;
-    }
     let result = ok(&mut a, "doc_export_snapshot_package", args);
     assert_eq!(result["items"][0]["id"], "item_1");
     assert_eq!(result["items"][0]["page"], 3);
@@ -838,6 +858,7 @@ fn crop_review_package_export_through_tools() {
                 rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 20.0, bottom: 40.0, right: 80.0, top: 120.0 },
                 caption: "Second page".into(),
                 note: Some("Later in canonical order".into()),
+                ocr_mode: pdfcraft_engine::export::CropReviewOcrMode::Auto,
                 ocr_text: None,
                 ocr_extracted_at: None,
                 created_at: Utc::now(),
@@ -849,9 +870,11 @@ fn crop_review_package_export_through_tools() {
                 id: "crop-0001".into(),
                 kind: pdfcraft_engine::export::ExportItemKind::Snapshot,
                 page_number: 1,
-                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 10.0, bottom: 60.0, right: 90.0, top: 140.0 },
+                // Covers the fixture's "Page 1" (24 pt from y = 150), so OCR has text to find.
+                rect_pdf: pdfcraft_engine::export::CropPdfRect { left: 10.0, bottom: 140.0, right: 120.0, top: 185.0 },
                 caption: "First page".into(),
                 note: Some("First in canonical order".into()),
+                ocr_mode: pdfcraft_engine::export::CropReviewOcrMode::Auto,
                 ocr_text: None,
                 ocr_extracted_at: None,
                 created_at: Utc::now(),
@@ -860,13 +883,6 @@ fn crop_review_package_export_through_tools() {
             .unwrap();
     }
     let args = json!({ "doc": doc, "out": "package" });
-    if !pdfcraft_engine::ocr::available() {
-        assert!(matches!(
-            a.call("doc_export_crop_review_package", &args),
-            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
-        ));
-        return;
-    }
     let result = ok(&mut a, "doc_export_crop_review_package", args);
     assert_eq!(result["count"], 2);
     assert_eq!(result["items"][0]["id"], "item_1");
@@ -877,6 +893,9 @@ fn crop_review_package_export_through_tools() {
     let manifest: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("package/manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["items"][0]["caption"], "First page");
     assert_eq!(manifest["items"][1]["caption"], "Second page");
+    // v1.1 rule: the crop's native text first (OCR only where there is none), so no models needed.
+    assert_eq!(manifest["items"][0]["ocr_text"].as_str().map(str::trim), Some("Page 1"), "{}", manifest["items"][0]);
+    assert!(dir.join("package/report.marker.json").is_file());
 }
 
 #[test]
@@ -907,19 +926,15 @@ fn snapshot_package_export_refuses_invalid_rectangles_and_confined_paths() {
         Err(ToolError::Failed(_))
     ));
 
-    if !pdfcraft_engine::ocr::available() {
-        assert!(matches!(
-            a.call(
-                "doc_export_snapshot_package",
-                &json!({
-                    "doc": doc,
-                    "out": "needs-models",
-                    "items": [{ "page": 1, "rect": [10, 20, 50, 70], "caption": "Needs OCR" }]
-                })
-            ),
-            Err(ToolError::Failed(message)) if message.contains("the text recognition models are not installed")
-        ));
-    }
+    let _ = ok(
+        &mut a,
+        "doc_export_snapshot_package",
+        json!({
+            "doc": doc,
+            "out": "needs-models",
+            "items": [{ "page": 1, "rect": [10, 20, 50, 70], "caption": "Needs OCR" }]
+        }),
+    );
 }
 
 #[test]
@@ -942,6 +957,7 @@ fn crop_review_package_tool_schema_requires_only_doc_and_out() {
     assert!(!tool.read_only);
     assert!(tool.destructive);
     assert_eq!(tool.input_schema["required"], json!(["doc", "out"]));
+    assert_eq!(tool.input_schema["properties"]["word"]["type"], "boolean");
 }
 
 #[test]

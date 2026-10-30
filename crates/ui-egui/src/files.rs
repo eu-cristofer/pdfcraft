@@ -294,11 +294,8 @@ impl PdfCraftApp {
         let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project.pdf".into());
         self.open_bytes(&name, Some(dir.join("source.pdf").to_string_lossy().into_owned()), project.source_pdf_bytes.as_ref().clone())?;
         let Some((index, id)) = self.active_ids() else { return Err("the project did not open a document".into()) };
-        {
-            let store = self.session.crop_review_mut(id).map_err(|e| e.to_string())?;
-            for crop in project.crops {
-                store.upsert(crop)?;
-            }
+        for crop in project.crops {
+            self.session.upsert_crop_review_item(id, crop).map_err(|e| e.to_string())?;
         }
         self.crop_review_project_path = Some(dir.to_string_lossy().into_owned());
         if let Some(doc) = self.session.get(id) {

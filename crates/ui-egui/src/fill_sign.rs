@@ -651,7 +651,7 @@ pub(crate) fn page_input(
         if let Some(rect) = image.rect(p, at, tool == FillTool::Initials) {
             let tex = image_texture(ui, image, preview);
             xf.paint_user_image(ui.painter(), tex, p, rect, i64::from(p.rotation), Color32::WHITE);
-            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
         }
     } else {
         ui.ctx().set_cursor_icon(if tool == FillTool::Text { egui::CursorIcon::Text } else { egui::CursorIcon::Crosshair });

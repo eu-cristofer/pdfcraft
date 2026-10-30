@@ -3,13 +3,12 @@
 //! On the desktop the export runs on a worker thread and reports progress in the notice bar;
 //! on the web it runs in place and downloads the files.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use egui::{Align, Layout};
 use pdfcraft_engine::export::{
-    ExportRect, ExportSource, Exporter, ImageFormat, SnapshotExportItemInput, SnapshotExportMetadata, SnapshotExportPackageInput,
-    normalize_snapshot_export_items, populate_snapshot_export_ocr, write_snapshot_export_package,
+    ExportSource, Exporter, ImageFormat, SnapshotExportPackageInput, populate_snapshot_export_ocr, write_snapshot_export_package,
 };
 
 use crate::marks_ui::PageRange;
@@ -27,42 +26,31 @@ pub enum ExportKind {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct SnapshotPackageDraft {
-    /// 0-based page index.
-    pub page: usize,
-    /// Display-page rectangle [x0, y0, x1, y1] in points, top-left origin.
-    pub rect: [f32; 4],
-    pub caption: String,
-    pub note: String,
-}
-
-impl SnapshotPackageDraft {
-    fn metadata(&self) -> SnapshotExportMetadata {
-        SnapshotExportMetadata {
-            caption: self.caption.trim().to_string(),
-            note: (!self.note.trim().is_empty()).then(|| self.note.trim().to_string()),
-        }
-    }
-
-    fn export_rect(&self) -> ExportRect {
-        ExportRect { x: self.rect[0], y: self.rect[1], width: self.rect[2] - self.rect[0], height: self.rect[3] - self.rect[1] }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub struct ExportDraft {
     pub dpi: f64,
     pub range: PageRange,
     pub format: ImageFormat,
     /// Export all images ▸ skip images with fewer pixels than this on their shorter side.
     pub min_side: u32,
-    /// A one-rectangle snapshot package draft opened from the marquee flow.
-    pub snapshot_package: Option<SnapshotPackageDraft>,
+    /// Parent folder where package exports are created.
+    pub destination_dir: String,
+    /// Name of the package directory to create inside `destination_dir`.
+    pub package_dir_name: String,
+    /// Whether crop review package export should also write report.docx.
+    pub include_word_report: bool,
 }
 
 impl Default for ExportDraft {
     fn default() -> Self {
-        Self { dpi: 150.0, range: PageRange::default(), format: ImageFormat::Png, min_side: 0, snapshot_package: None }
+        Self {
+            dpi: 150.0,
+            range: PageRange::default(),
+            format: ImageFormat::Png,
+            min_side: 0,
+            destination_dir: String::new(),
+            package_dir_name: String::new(),
+            include_word_report: false,
+        }
     }
 }
 
@@ -74,69 +62,44 @@ fn export_stem(name: &str) -> String {
     if stem.is_empty() { "export".into() } else { stem.to_string() }
 }
 
-fn snapshot_package_target(dir: &Path, stem: &str) -> PathBuf {
-    dir.join(format!("{stem}_snapshot_package"))
+fn suggested_crop_review_package_dir_name(stem: &str) -> String {
+    format!("{stem}_crop_review_package")
 }
 
-fn crop_review_package_target(dir: &Path, stem: &str) -> PathBuf {
-    dir.join(format!("{stem}_crop_review_package"))
+fn typed_export_dir(path: &str) -> Result<PathBuf, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Choose a destination folder or browse to one.".into());
+    }
+    let dir = PathBuf::from(path);
+    if !dir.exists() {
+        return Err(format!("Destination folder does not exist: {}", dir.display()));
+    }
+    if !dir.is_dir() {
+        return Err(format!("Destination path is not a folder: {}", dir.display()));
+    }
+    Ok(dir)
 }
 
-fn snapshot_body(ui: &mut egui::Ui, t: &Tokens, draft: &mut SnapshotPackageDraft) -> (bool, bool) {
-    ui.label(egui::RichText::new(tl!("Export Snapshot Package")).font(theme::semibold(18.0)));
-    ui.add_space(8.0);
+fn typed_package_dir_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Choose a package folder name.".into());
+    }
+    if matches!(name, "." | "..") {
+        return Err("Package folder name must not be . or ...".into());
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err("Package folder name must not contain path separators.".into());
+    }
+    Ok(name.to_string())
+}
 
-    let width = draft.rect[2] - draft.rect[0];
-    let height = draft.rect[3] - draft.rect[1];
-    ui.label(
-        egui::RichText::new(crate::i18n::fmt(
-            tl!("Page {page}, rectangle {width} x {height} pt"),
-            &[("page", &draft.page.saturating_add(1).to_string()), ("width", &format!("{width:.0}")), ("height", &format!("{height:.0}"))],
-        ))
-        .small()
-        .color(t.text_faint),
-    );
-    ui.add_space(10.0);
-
-    egui::Grid::new("snapshot-package").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-        let label = ui.label(tl!("Caption"));
-        ui.add(widgets::line(&mut draft.caption).desired_width(320.0)).labelled_by(label.id);
-        ui.end_row();
-
-        let label = ui.label(tl!("Note"));
-        ui.add(widgets::line(&mut draft.note).desired_width(320.0)).labelled_by(label.id);
-        ui.end_row();
-    });
-
-    ui.add_space(8.0);
-    ui.label(
-        egui::RichText::new(tl!("Exports a package with source.pdf, manifest.json, report.tex, and one evidence image.")).small().color(t.text_faint),
-    );
-
-    let (mut apply, mut cancel) = (false, false);
-    ui.add_space(12.0);
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        let ok = !draft.caption.trim().is_empty();
-        if ui.add_enabled_ui(ok, |ui| widgets::pill_button(ui, tl!("Export"), true)).inner.clicked() {
-            apply = true;
-        }
-        if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
-            cancel = true;
-        }
-    });
-    (apply, cancel)
+fn crop_review_export_parent_dir(app: &PdfCraftApp) -> Result<PathBuf, String> {
+    app.export_dir_override.clone().map(PathBuf::from).map_or_else(|| typed_export_dir(&app.export_draft.destination_dir), Ok)
 }
 
 pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: ExportKind) -> (bool, bool) {
-    if kind == ExportKind::Image {
-        let response = { app.export_draft.snapshot_package.as_mut().map(|snapshot| snapshot_body(ui, t, snapshot)) };
-        if let Some((apply, cancel)) = response {
-            if cancel {
-                app.export_draft.snapshot_package = None;
-            }
-            return (apply, cancel);
-        }
-    }
     if kind == ExportKind::CropReviewPackage {
         ui.label(egui::RichText::new(tl!("Export Crop Review Package")).font(theme::semibold(18.0)));
         ui.add_space(8.0);
@@ -149,10 +112,57 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: E
             .small()
             .color(t.text_faint),
         );
+        ui.add_space(10.0);
+        let suggested_name = app
+            .active_ids()
+            .and_then(|(_, id)| app.session.get(id))
+            .map(|d| export_stem(&d.name))
+            .map(|stem| suggested_crop_review_package_dir_name(&stem))
+            .unwrap_or_else(|| "export_crop_review_package".into());
+        if app.export_draft.package_dir_name.trim().is_empty() {
+            app.export_draft.package_dir_name = suggested_name.clone();
+        }
+        let label = ui.label(tl!("Destination folder"));
+        ui.horizontal(|ui| {
+            ui.add(widgets::line(&mut app.export_draft.destination_dir).desired_width(320.0)).labelled_by(label.id);
+            if widgets::pill_button(ui, tl!("Browse…"), false).clicked() {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let dialog = rfd::AsyncFileDialog::new().set_title(tl!("Choose a folder for the exported files").to_string());
+                    let _ = app.ask_one(crate::pickers::Ask::Folder(dialog), None, |app, dir| {
+                        app.export_draft.destination_dir = dir.to_string_lossy().into_owned();
+                    });
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    app.notify_tr("Crop review package export requires the desktop app");
+                }
+            }
+        });
+        ui.add_space(6.0);
+        let label = ui.label(tl!("Package folder name"));
+        ui.add(widgets::line(&mut app.export_draft.package_dir_name).desired_width(320.0)).labelled_by(label.id);
+        ui.add_space(6.0);
+        let final_folder = match (crop_review_export_parent_dir(app), typed_package_dir_name(&app.export_draft.package_dir_name)) {
+            (Ok(dir), Ok(name)) => dir.join(name).display().to_string(),
+            (Ok(dir), Err(_)) => dir.join(app.export_draft.package_dir_name.trim()).display().to_string(),
+            _ => {
+                let name = app.export_draft.package_dir_name.trim();
+                if name.is_empty() { suggested_name.clone() } else { name.to_string() }
+            }
+        };
+        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Final package folder: {path}"), &[("path", &final_folder)])).small().color(t.text_faint));
+        ui.label(
+            egui::RichText::new(tl!("Choose the parent folder and the package folder name PdfCraft will create inside it."))
+                .small()
+                .color(t.text_faint),
+        );
+        ui.add_space(8.0);
+        ui.add(widgets::checkbox(&mut app.export_draft.include_word_report, tl!("Also write report.docx")));
         ui.add_space(12.0);
         let (mut apply, mut cancel) = (false, false);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let ok = count > 0;
+            let ok = count > 0 && crop_review_export_parent_dir(app).is_ok() && typed_package_dir_name(&app.export_draft.package_dir_name).is_ok();
             if ui.add_enabled_ui(ok, |ui| widgets::pill_button(ui, tl!("Export"), true)).inner.clicked() {
                 apply = true;
             }
@@ -341,57 +351,7 @@ fn run(
     }
 }
 
-fn run_snapshot_package_export(
-    src: ExportSource,
-    source_pdf_bytes: Arc<Vec<u8>>,
-    draft: SnapshotPackageDraft,
-    stem: String,
-    dir: PathBuf,
-    status: &ExportStatus,
-    lang: crate::i18n::Lang,
-) {
-    crate::i18n::set_current(lang);
-    let set = |done: usize, msg: Option<String>| {
-        if let Ok(mut s) = status.lock() {
-            *s = Some((done, 1, msg));
-        }
-    };
-
-    set(0, None);
-
-    let mut items = match normalize_snapshot_export_items(
-        src.pages,
-        vec![SnapshotExportItemInput {
-            order: 0,
-            page: draft.page.saturating_add(1),
-            rect: draft.export_rect(),
-            metadata: draft.metadata(),
-            ocr: None,
-        }],
-    ) {
-        Ok(items) => items,
-        Err(e) => {
-            set(1, Some(crate::i18n::fmt(tl!("Export stopped: {e}"), &[("e", &e)])));
-            return;
-        }
-    };
-    if let Err(e) = populate_snapshot_export_ocr(&src, &mut items) {
-        set(1, Some(crate::i18n::fmt(tl!("Export stopped: {e}"), &[("e", &e)])));
-        return;
-    }
-
-    let target = snapshot_package_target(&dir, &stem);
-    let shown = target.display().to_string();
-    let input = SnapshotExportPackageInput { items, render_source: src, source_pdf_bytes };
-
-    let msg = match write_snapshot_export_package(&target, input) {
-        Ok(()) => crate::i18n::fmt(tl!("Exported snapshot package to {dir}"), &[("dir", &shown)]),
-        Err(e) => crate::i18n::fmt(tl!("Export stopped: {e}"), &[("e", &e)]),
-    };
-    set(1, Some(msg));
-}
-
-fn run_crop_review_package_export(input: SnapshotExportPackageInput, stem: String, dir: PathBuf, status: &ExportStatus, lang: crate::i18n::Lang) {
+fn run_crop_review_package_export(input: SnapshotExportPackageInput, target: PathBuf, status: &ExportStatus, lang: crate::i18n::Lang) {
     crate::i18n::set_current(lang);
     let total = input.items.len();
     let set = |done: usize, msg: Option<String>| {
@@ -401,7 +361,6 @@ fn run_crop_review_package_export(input: SnapshotExportPackageInput, stem: Strin
     };
 
     set(0, None);
-    let target = crop_review_package_target(&dir, &stem);
     let shown = target.display().to_string();
     let msg = match write_snapshot_export_package(&target, input) {
         Ok(()) => crate::i18n::fmt(tl!("Exported crop review package to {dir}"), &[("dir", &shown)]),
@@ -423,56 +382,29 @@ impl PdfCraftApp {
         }
         let Some(doc) = self.session.get(id) else { return };
         let src = doc.export_source();
-        let source_pdf_bytes = doc.bytes.clone();
         let stem = export_stem(&doc.name);
-
-        if kind == ExportKind::Image
-            && let Some(snapshot) = self.export_draft.snapshot_package.clone()
-        {
-            let status: ExportStatus = Arc::new(Mutex::new(Some((0, 1, None))));
-            self.export_draft.snapshot_package = None;
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let start = move |app: &mut Self, dir: PathBuf, inline: bool| {
-                    let st = status.clone();
-                    let lang = crate::i18n::current();
-                    let work = move || run_snapshot_package_export(src, source_pdf_bytes, snapshot, stem, dir, &st, lang);
-                    if inline {
-                        work();
-                    } else {
-                        std::thread::Builder::new().name("pdfcraft-snapshot-export".into()).spawn(work).ok();
-                    }
-                    app.export_status = Some(status);
-                };
-                match self.export_dir_override.clone() {
-                    Some(d) => start(self, d.into(), true),
-                    None => {
-                        let dialog = rfd::AsyncFileDialog::new().set_title(tl!("Choose a folder for the exported files").to_string());
-                        self.ask_one(crate::pickers::Ask::Folder(dialog), None, move |app, dir| start(app, dir, false));
-                    }
-                }
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                self.notify_tr("Snapshot package export requires the desktop app");
-            }
-            return;
-        }
         if kind == ExportKind::CropReviewPackage {
-            let input = match doc.crop_review_snapshot_export_package_input() {
-                Ok(input) => input,
+            let mut input = match doc.crop_review_snapshot_export_package_input() {
+                Ok(mut input) => {
+                    input.include_word_report = self.export_draft.include_word_report;
+                    input
+                }
                 Err(e) => {
                     self.notify_fmt("Export stopped: {e}", &[("e", &e)]);
                     return;
                 }
             };
+            if let Err(e) = populate_snapshot_export_ocr(&input.render_source, &mut input.items) {
+                self.notify_fmt("Export stopped: {e}", &[("e", &e)]);
+                return;
+            }
             let status: ExportStatus = Arc::new(Mutex::new(Some((0, input.items.len(), None))));
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let start = move |app: &mut Self, dir: PathBuf, inline: bool| {
+                let start = move |app: &mut Self, target: PathBuf, inline: bool| {
                     let st = status.clone();
                     let lang = crate::i18n::current();
-                    let work = move || run_crop_review_package_export(input, stem, dir, &st, lang);
+                    let work = move || run_crop_review_package_export(input, target, &st, lang);
                     if inline {
                         work();
                     } else {
@@ -480,12 +412,10 @@ impl PdfCraftApp {
                     }
                     app.export_status = Some(status);
                 };
-                match self.export_dir_override.clone() {
-                    Some(d) => start(self, d.into(), true),
-                    None => {
-                        let dialog = rfd::AsyncFileDialog::new().set_title(tl!("Choose a folder for the exported files").to_string());
-                        self.ask_one(crate::pickers::Ask::Folder(dialog), None, move |app, dir| start(app, dir, false));
-                    }
+                match (crop_review_export_parent_dir(self), typed_package_dir_name(&self.export_draft.package_dir_name)) {
+                    (Ok(dir), Ok(name)) => start(self, dir.join(name), true),
+                    (Err(e), _) => self.notify(e),
+                    (_, Err(e)) => self.notify(e),
                 }
             }
             #[cfg(target_arch = "wasm32")]

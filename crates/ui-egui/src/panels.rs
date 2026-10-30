@@ -670,7 +670,8 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let mut bm_expand: Option<usize> = None;
     let mut panel_edit: Option<pdfcraft_engine::Edit> = None;
     let mut field_properties = None;
-    let mut metadata_edit: Option<crate::metadata_panel::MetadataEdit> = None;
+    let mut crop_edit: Option<crate::crops_panel::PanelEdit> = None;
+    let mut crop_action: Option<crate::crops_panel::HeaderAction> = None;
     let mut panel_command: Option<&'static str> = None;
     let mut sig_action: Option<crate::sign_ui::PanelAction> = None;
     let mut a11y_action: Option<crate::a11y_ui::PanelAction> = None;
@@ -700,8 +701,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     RightPanel::Comments => ("Comments", Some(crate::comments_panel::count(info))),
                     RightPanel::Bookmarks => ("Bookmarks", None),
                     RightPanel::Pages => ("Pages", Some(info.pages.len())),
-                    RightPanel::Crops => ("Crops", Some(doc.ordered_crop_review_items().len())),
-                    RightPanel::Metadata => ("Metadata", view.crop_review.selected.as_ref().map(|_| 1)),
+                    RightPanel::Crops | RightPanel::Metadata => ("Crops", Some(doc.ordered_crop_review_items().len())),
                     RightPanel::Fields => ("Fields", Some(info.fields.len())),
                     RightPanel::Layers => ("Layers", Some(info.layers.len())),
                     RightPanel::Attachments => ("Attachments", Some(info.attachments.len())),
@@ -744,6 +744,9 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         // Right to left: close, "…", filter, search (Acrobat's order left to right).
                         if panel == RightPanel::Comments {
                             panel_command = crate::comments_panel::header_controls(ui, info, view, doc.comments_hidden());
+                        }
+                        if matches!(panel, RightPanel::Crops | RightPanel::Metadata) {
+                            crop_action = crate::crops_panel::header_controls(ui, view.crop_review.hidden).or(crop_action);
                         }
                         if panel == RightPanel::Comments
                             && icons::button(ui, "search", 26.0, view.comments.search.is_some(), tl!("Search comments")).clicked()
@@ -862,9 +865,8 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         }
                     }
                     RightPanel::Pages => pages(ui, &t, info, view, modal, bm_editable, &mut nav),
-                    RightPanel::Crops => crate::crops_panel::show(ui, &t, doc, view, &mut nav),
-                    RightPanel::Metadata => {
-                        metadata_edit = crate::metadata_panel::show(ui, &t, doc, view);
+                    RightPanel::Crops | RightPanel::Metadata => {
+                        crop_edit = crate::crops_panel::show(ui, &t, doc, view, &mut nav);
                     }
                     RightPanel::Fields => field_properties = fields(ui, &t, info, &doc.form, preparing, &mut view.prepare, &mut nav, &mut panel_edit),
                     RightPanel::Layers => {
@@ -1024,14 +1026,41 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     if let Some((name, widget)) = field_properties {
         app.open_field_props(&name, widget);
     }
-    if let Some(edit) = metadata_edit
-        && let Ok(store) = app.session.crop_review_mut(id)
-        && let Some(previous) = store.get(&edit.id).cloned()
-    {
-        let mut updated = previous;
-        updated.caption = edit.caption;
-        updated.note = edit.note;
-        let _ = store.upsert(updated);
+    if let Some(edit) = crop_edit {
+        match edit {
+            crate::crops_panel::PanelEdit::UpdateMetadata { id: crop_id, caption, note, ocr_mode } => {
+                let _ = app.session.update_crop_review_metadata(id, &crop_id, caption, note, ocr_mode);
+                if ocr_mode.allows_ocr() {
+                    app.queue_crop_review_ocr(id, &crop_id);
+                }
+            }
+            crate::crops_panel::PanelEdit::Delete { id: crop_id } => {
+                let next = app.session.delete_crop_review_item(id, &crop_id).ok().flatten();
+                match next {
+                    Some(next_id) => app.views[index].crop_review.select(&next_id),
+                    None => app.views[index].crop_review.clear(),
+                }
+                if let Some(doc) = app.session.get(id) {
+                    app.views[index].crop_review.ensure_selected(doc);
+                }
+            }
+        }
+    }
+    if let Some(action) = crop_action {
+        match action {
+            crate::crops_panel::HeaderAction::Export => {
+                app.dialog = Some(crate::Dialog::Export(crate::export_ui::ExportKind::CropReviewPackage));
+            }
+            crate::crops_panel::HeaderAction::ToggleHidden => {
+                let hidden = !app.views[index].crop_review.hidden;
+                app.views[index].crop_review.hidden = hidden;
+                if hidden {
+                    app.views[index].crop_review.creating = false;
+                    app.views[index].crop_review.gesture = None;
+                }
+                app.views[index].invalidate_content();
+            }
+        }
     }
     if let Some(c) = panel_command {
         app.run_command(c);

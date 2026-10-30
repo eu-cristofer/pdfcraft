@@ -1,6 +1,7 @@
-//! Community links: the Discord button is one click away everywhere; Help menu, About dialog and
-//! home screen open the ArtCraft and PdfCraft pages.
+//! Help links: the Help button is one click away everywhere; Help menu, About dialog and home
+//! screen open the issue tracker, this app's repository and the upstream attribution link.
 
+use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use pdfcraft_engine::links;
@@ -18,39 +19,34 @@ fn harness(setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, P
 }
 
 #[test]
-fn discord_button_in_the_top_bar_opens_discord() {
+fn help_button_in_the_top_bar_opens_the_issue_tracker() {
     let mut h = harness(|_| {});
-    h.get_by_label("Discord").click();
+    h.get_by_role_and_label(Role::Button, "Help").click();
     h.run_steps(2);
-    assert_eq!(h.state().last_opened_url.as_deref(), Some(links::DISCORD));
-    assert_eq!(links::DISCORD, "https://discord.gg/artcraft");
+    assert_eq!(h.state().last_opened_url.as_deref(), Some(links::HELP));
+    assert!(links::HELP.contains("eu-cristofer/pdfcraft/issues"));
 }
 
 #[test]
 fn home_screen_links() {
-    for (label, url) in [
-        ("Join our Discord", links::DISCORD),
-        ("PdfCraft web page", "https://getartcraft.com/apps/pdfcraft"),
-        ("PdfCraft on GitHub", "https://github.com/storytold/pdfcraft"),
-        ("ArtCraft website", "https://getartcraft.com"),
-    ] {
+    for l in links::LINKS {
         let mut h = harness(|_| {});
-        h.get_by_label("Join the ArtCraft community");
-        h.get_by_label(label).click();
+        h.get_by_label("Help and feedback");
+        h.get_by_label(l.label).click();
         h.run_steps(2);
-        assert_eq!(h.state().last_opened_url.as_deref(), Some(url), "{label}");
+        assert_eq!(h.state().last_opened_url.as_deref(), Some(l.url), "{}", l.label);
     }
 }
 
 #[test]
 fn home_community_card_closes_for_this_run() {
     let mut h = harness(|_| {});
-    h.get_by_label("Join the ArtCraft community");
+    h.get_by_label("Help and feedback");
     h.get_by_label("Close").click();
     h.run_steps(2);
     assert!(h.state().community_card_closed);
-    assert!(h.query_by_label("Join the ArtCraft community").is_none());
-    assert!(h.query_by_label("Join our Discord").is_none());
+    assert!(h.query_by_label("Help and feedback").is_none());
+    assert!(h.query_by_label("Get help or report a problem").is_none());
     // Not remembered: a fresh app shows the card again.
     assert!(!PdfCraftApp::new().community_card_closed);
 }
@@ -63,10 +59,12 @@ fn about_dialog_shows_the_brand_and_links() {
         app.open_bytes("one.pdf", None, pdf.to_vec()).unwrap();
         app.dialog = Some(Dialog::About);
     });
-    assert!(h.query_all_by_label("ArtCraft").count() >= 2, "the mark and the wordmark (alt text)");
-    h.get_by_label("Join our Discord").click();
+    assert!(h.query_all_by_label(pdfcraft_ui_egui::branding::APP_NAME).count() >= 1, "the suite mark (alt text) or name");
+    assert!(h.query_by_label(pdfcraft_ui_egui::branding::BASED_ON).is_some());
+    assert!(h.query_by_label("ArtCraft").is_none(), "no ArtCraft mark in About");
+    h.get_by_label("Get help or report a problem").click();
     h.run_steps(2);
-    assert_eq!(h.state().last_opened_url.as_deref(), Some(links::DISCORD));
+    assert_eq!(h.state().last_opened_url.as_deref(), Some(links::HELP));
 }
 
 #[test]
@@ -79,37 +77,10 @@ fn help_commands_open_each_link() {
     }
 }
 
-/// Runs frames until the node labelled `label` exists and has stopped moving, then returns it.
-///
-/// The About dialog is a modal centred on its own size, and switching tabs changes that size, so
-/// for a few frames afterwards the modal grows and recentres and every control in it moves. A
-/// fixed number of frames is a guess at how long that takes: it was too few after the 0.5.0
-/// contributors refresh (78 names instead of 5) on some machines, the click on Table landed where
-/// the button had been, and the table never opened (#671).
-fn settled<'a>(h: &'a mut Harness<'static, PdfCraftApp>, label: &'a str) -> egui_kittest::Node<'a> {
-    let mut last = None;
-    for _ in 0..60 {
-        h.run_steps(1);
-        let now = h.query_by_label(label).map(|n| n.rect());
-        if now.is_some() && now == last {
-            return h.get_by_label(label);
-        }
-        last = now;
-    }
-    panic!("{label:?} never appeared or never stopped moving");
-}
-
 #[test]
-fn about_dialog_has_contributors_and_models_tabs() {
-    let mut h = harness(|app| app.dialog = Some(Dialog::About));
-    settled(&mut h, "Contributors").click();
-    // The owner is always in the compiled-in credits (contributors/contributors.json), shown by username.
-    settled(&mut h, "@echelon");
-    settled(&mut h, "Table").click();
-    settled(&mut h, "PRs");
-    settled(&mut h, "Display name").click();
-    settled(&mut h, "Brandon Thomas");
-    settled(&mut h, "Models").click();
-    h.run_steps(4);
-    assert!(h.query_all_by_label("Anthropic").count() >= 1);
+fn no_link_points_at_artcraft_or_discord() {
+    for l in links::LINKS {
+        let url = l.url.to_lowercase();
+        assert!(!url.contains("artcraft") && !url.contains("discord"), "{}", l.url);
+    }
 }

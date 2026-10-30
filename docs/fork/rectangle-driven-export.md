@@ -25,15 +25,15 @@ This note does not define:
 
 - a generic report system
 - non-snapshot evidence kinds
-- a new package family separate from `docs/snapshot-export-spec.md`
+- a new package family separate from `docs/fork/snapshot-export-spec.md`
 - arbitrary trusted-LaTeX fields
 - a requirement that the export rectangle be persisted as a PDF annotation
 - final command names or UI copy for later sprints
-- the persistent crop-review workspace defined in `docs/crop-review-workspace.md`
+- the persistent crop-review workspace defined in `docs/fork/crop-review-workspace.md`
 
 ## Relationship to the crop-review workspace
 
-`docs/crop-review-workspace.md` defines the separate persistent crop-review product surface.
+`docs/fork/crop-review-workspace.md` defines the separate persistent crop-review product surface.
 
 That workspace is intentionally not the same thing as the original snapshot tool covered here:
 
@@ -45,7 +45,7 @@ This note remains authoritative only for the rectangle-driven snapshot-export fl
 
 ## Relationship to the package contract
 
-`docs/snapshot-export-spec.md` remains authoritative for:
+`docs/fork/snapshot-export-spec.md` remains authoritative for:
 
 - package shape
 - `manifest.json` canonicality
@@ -172,6 +172,12 @@ The OCR source is:
 - the same displayed-page rectangle as the exported crop
 - the same exported document state
 
+Extraction order for shipped v1.1 behavior:
+
+- exporters SHOULD extract existing page text from the selected rectangle first when the PDF already carries a usable text layer for that portion
+- exporters SHOULD fall back to bitmap OCR of the same selected rectangle only when no usable native text is available there
+- whichever path succeeds, the resulting `ocr_text` still belongs to the same selected portion and stays tied to that rectangle only
+
 OCR is not:
 
 - whole-page OCR attached loosely to the item
@@ -179,25 +185,25 @@ OCR is not:
 - a second independently chosen rectangle
 - a generic transcript system for the entire package
 
-### 6. OCR placement in the package for v1
+### 6. OCR placement in the package for v1.1
 
-v1 keeps `manifest.json` canonical and unchanged for rectangle metadata.
+v1.1 keeps `manifest.json` canonical and extends it with optional per-item `ocr_text`.
 
-For v1, OCR text is derived into `report.tex` from the selected portion.
+For v1.1, OCR text is canonical package context and derived outputs consume it from the same ordered item list.
 
-It is not introduced as:
+It is still not introduced as:
 
-- a new canonical manifest field
 - a sidecar `ocr/` directory
 - per-item text files beside the PNGs
 - a generic package-wide text database
 
 This is deliberate scope control for Sprint 1:
 
-- the package contract remains anchored on the existing manifest and figure-oriented report structure
-- OCR is part of the shipped rectangle-driven flow, but in v1 it remains a derived reporting layer rather than a new canonical manifest schema
+- the package contract remains anchored on one canonical manifest
+- OCR is now canonical machine-readable package context
+- `report.tex`, `report.docx`, and `report.marker.json` remain derived artifacts
 
-If a later project needs canonical machine-readable OCR data in the package, that must be a separate explicit versioned contract change.
+This is an explicit versioned contract change from the earlier v1 direction.
 
 ### 7. Minimal LaTeX structure that remains in scope
 
@@ -205,24 +211,26 @@ If a later project needs canonical machine-readable OCR data in the package, tha
 
 The existing snapshot export structure remains the starting point.
 
-The allowed v1 shape is:
+The allowed v1.1 shape is:
 
-- an optional top-level heading such as `\section*{Snapshot Evidence}`
-- one figure block per manifest item, in manifest order
-- for each figure:
-  - `\centering`
-  - `\includegraphics[width=\linewidth]{<image.path>}`
-  - `\caption{<escaped manifest caption>}`
+- a minimal `pdflatex`-compilable file
+- one `enumerate` item per manifest item, in manifest order
+- for each item:
+  - `\item Conforme a Figura~\ref{fig:<id>}, <escaped note or fallback text>.`
+  - one `\noindent\begin{minipage}[t]{\linewidth}` block
+  - `\fbox{\includegraphics[width=\linewidth]{<image.path>}}`
+  - `\captionsetup{justification=centering}`
+  - `\captionof{figure}{<escaped manifest caption>}`
   - `\label{fig:<id>}`
-- if `note` is present, one plain-text `\paragraph{Note.}` block after that figure
-- if OCR text is present, one plain-text `\paragraph{OCR.}` block after that figure's note block, or directly after the figure when no note exists
+- if OCR text is present, one plain-text `\noindent OCR.: ...` line after that item's minipage block
 
 Required rules:
 
-- figure order MUST match `manifest.items`
+- item order MUST match `manifest.items`
 - labels MUST remain derived from item IDs only
 - note text MUST come from the manifest `note` field only
-- OCR text MUST come from OCR of the same selected portion only
+- OCR text MUST come from `manifest.items[*].ocr_text` for the same selected portion only
+- when native page text exists for that selected portion, derived outputs MUST use that manifest text rather than rerunning an unrelated OCR pass downstream
 - all user-authored and OCR text MUST be emitted as escaped plain text
 
 ### 8. What remains out of scope for LaTeX
@@ -244,7 +252,7 @@ The downstream use case remains a minimal evidence package centered on snapshot 
 
 ## Superseded earlier assumptions
 
-`docs/selected-rectangle-export.md` remains a historical contract for `002_selected-rec`.
+`docs/fork/selected-rectangle-export.md` remains a historical contract for `002_selected-rec`.
 
 For `003_export-flow`, the following earlier assumptions are superseded:
 

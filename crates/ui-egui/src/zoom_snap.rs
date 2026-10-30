@@ -5,13 +5,13 @@ use chrono::Utc;
 use egui::{Color32, CornerRadius, Pos2, Rect, Stroke};
 use pdfcraft_engine::{
     Document,
-    export::{CropPdfRect, CropReviewItem, ExportItemKind},
+    export::{CropPdfRect, CropReviewItem, CropReviewOcrMode, ExportItemKind},
 };
 use pdfcraft_render::{RenderConfig, RenderRequest, RequestKind, Tile};
 
 use crate::canvas::{DocView, PageXform};
 use crate::page_pointer::PagePointer;
-use crate::{Dialog, PdfCraftApp, QuickTool, RightPanel};
+use crate::{PdfCraftApp, QuickTool, RightPanel};
 
 /// A finished gesture: (page, the rectangle on screen, the same in page view points
 /// [x0, y0, x1, y1]); a plain click has an empty rectangle.
@@ -97,7 +97,7 @@ impl PdfCraftApp {
                 }
             };
             let created_id = item.id.clone();
-            let inserted = self.session.crop_review_mut(id).map_err(|e| e.to_string()).and_then(|store| store.upsert(item).map(|_| ()));
+            let inserted = self.session.upsert_crop_review_item(id, item).map_err(|e| e.to_string());
             match inserted {
                 Ok(()) => {
                     if self.right.is_none() {
@@ -107,6 +107,7 @@ impl PdfCraftApp {
                         view.crop_review.creating = false;
                         view.crop_review.select(created_id.as_str());
                     }
+                    self.queue_crop_review_ocr(id, &created_id);
                 }
                 Err(e) => self.notify_fmt("Couldn't add the crop: {e}", &[("e", &e)]),
             }
@@ -138,9 +139,6 @@ impl PdfCraftApp {
                     }
                     Err(e) => self.notify_fmt("Couldn't copy the snapshot: {e}", &[("e", &e.to_string())]),
                 }
-                self.export_draft.snapshot_package =
-                    Some(crate::export_ui::SnapshotPackageDraft { page, rect: view_rect, caption: String::new(), note: String::new() });
-                self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::Image));
             }
             _ => {}
         }
@@ -229,6 +227,7 @@ fn crop_review_item(doc: &Document, page: usize, view_rect: [f32; 4]) -> Result<
         rect_pdf,
         caption: String::new(),
         note: None,
+        ocr_mode: CropReviewOcrMode::Auto,
         ocr_text: None,
         ocr_extracted_at: None,
         created_at: now,

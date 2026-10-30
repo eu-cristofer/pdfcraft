@@ -663,7 +663,7 @@ fn image_signature_preview_follows_pointer_at_page_size_with_zoom_and_rotation()
         for y in [250.0, 150.0] {
             h.hover_at(at(&h, 40.0, y));
             h.run_steps(2);
-            assert_eq!(h.output().platform_output.cursor_icon, egui::CursorIcon::None, "the image replaces the crosshair");
+            assert_eq!(h.output().platform_output.cursor_icon, egui::CursorIcon::Default, "the image preview keeps the pointer visible");
             // The picture is 96 x 32 pt with its left edge at the pointer: the stroke spans 8..88
             // and the block above it 80..88. egui_kittest paints a mouse cursor, a 16 px triangle
             // down and right of the pointer, over the render, so only probe far from the pointer.
@@ -696,7 +696,7 @@ fn image_signature_preview_follows_pointer_at_page_size_with_zoom_and_rotation()
     }
     h.hover_at(pos2(5.0, 5.0));
     h.run_steps(2);
-    assert_ne!(h.output().platform_output.cursor_icon, egui::CursorIcon::None, "restore the pointer off the page");
+    assert_ne!(h.output().platform_output.cursor_icon, egui::CursorIcon::None, "the pointer stays visible off the page");
     std::fs::remove_file(path).unwrap();
 }
 

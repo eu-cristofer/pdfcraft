@@ -1024,6 +1024,7 @@ pub fn tools() -> Vec<ToolDef> {
                 json!({
                     "doc": doc(),
                     "out": { "type": "string", "description": "Directory to create for the package. Must not already exist." },
+                    "word": { "type": "boolean", "description": "Also write a derived report.docx beside report.tex." },
                     "items": {
                         "type": "array",
                         "minItems": 1,
@@ -1047,7 +1048,8 @@ pub fn tools() -> Vec<ToolDef> {
             .with(schema(
                 json!({
                     "doc": doc(),
-                    "out": { "type": "string", "description": "Directory to create for the package. Must not already exist." }
+                    "out": { "type": "string", "description": "Directory to create for the package. Must not already exist." },
+                    "word": { "type": "boolean", "description": "Also write a derived report.docx beside report.tex." }
                 }),
                 &["doc", "out"],
             )),
