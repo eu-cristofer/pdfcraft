@@ -749,12 +749,13 @@ const SNAPSHOT_EXPORT_RENDERING_IMAGE_FORMAT: &str = "png";
 const SNAPSHOT_EXPORT_PIXELS_PER_POINT: f32 = 2.0;
 const SNAPSHOT_EXPORT_OCR_DPI: f32 = 300.0;
 
-fn snapshot_export_tile_axis(start: f32, span: f32) -> Result<(u32, u32), String> {
-    if !start.is_finite() || !span.is_finite() {
+/// One axis of a tile: `start` and `span` in points, scaled once to device pixels at `scale`.
+fn snapshot_export_tile_axis(start: f32, span: f32, scale: f32) -> Result<(u32, u32), String> {
+    if !start.is_finite() || !span.is_finite() || !scale.is_finite() || scale <= 0.0 {
         return Err("snapshot rectangle coordinates must be finite".into());
     }
-    let origin = (f64::from(start) * f64::from(SNAPSHOT_EXPORT_PIXELS_PER_POINT)).floor();
-    let end = (f64::from(start + span) * f64::from(SNAPSHOT_EXPORT_PIXELS_PER_POINT)).ceil();
+    let origin = (f64::from(start) * f64::from(scale)).floor();
+    let end = (f64::from(start + span) * f64::from(scale)).ceil();
     if !origin.is_finite() || !end.is_finite() || origin < 0.0 || end <= origin || end > f64::from(u32::MAX) {
         return Err("snapshot image dimensions are out of range".into());
     }
@@ -764,16 +765,13 @@ fn snapshot_export_tile_axis(start: f32, span: f32) -> Result<(u32, u32), String
 }
 
 fn snapshot_export_render_tile(rect: ExportRect) -> Result<Tile, String> {
-    let rect = rect.validate()?;
-    let (x, w) = snapshot_export_tile_axis(rect.x, rect.width)?;
-    let (y, h) = snapshot_export_tile_axis(rect.y, rect.height)?;
-    Ok(Tile { x, y, w, h })
+    snapshot_export_render_tile_at_scale(rect, SNAPSHOT_EXPORT_PIXELS_PER_POINT)
 }
 
 fn snapshot_export_render_tile_at_scale(rect: ExportRect, scale: f32) -> Result<Tile, String> {
     let rect = rect.validate()?;
-    let (x, w) = snapshot_export_tile_axis(rect.x * scale, rect.width * scale)?;
-    let (y, h) = snapshot_export_tile_axis(rect.y * scale, rect.height * scale)?;
+    let (x, w) = snapshot_export_tile_axis(rect.x, rect.width, scale)?;
+    let (y, h) = snapshot_export_tile_axis(rect.y, rect.height, scale)?;
     Ok(Tile { x, y, w, h })
 }
 

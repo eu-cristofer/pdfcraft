@@ -753,7 +753,8 @@ fn snapshot_package_export_through_tools() {
         "out": "package",
         "items": [{
             "page": 1,
-            "rect": [10, 20, 50, 70],
+            // Covers the fixture's "Page 1" (24 pt, baseline 150 pt from the top of the page).
+            "rect": [10, 120, 110, 160],
             "caption": "Page 1 crop",
             "note": "One item"
         }]
@@ -773,18 +774,17 @@ fn snapshot_package_export_through_tools() {
     assert_eq!(manifest["items"][0]["page"], 1);
     assert_eq!(manifest["items"][0]["caption"], "Page 1 crop");
     assert_eq!(manifest["items"][0]["note"], "One item");
-    assert_eq!(manifest["items"][0]["ocr_text"].is_string(), pdfcraft_engine::ocr::available());
+    // Native text first, so the crop's text needs no OCR models.
+    assert_eq!(manifest["items"][0]["ocr_text"].as_str().map(str::trim), Some("Page 1"), "{}", manifest["items"][0]);
     assert_eq!(manifest["items"][0]["image"]["path"], "evidence/item_1.png");
 
     let report = std::fs::read_to_string(root.join("report.tex")).unwrap();
     assert!(report.contains("\\label{fig:item_1}"));
     assert!(report.contains("\\captionof{figure}{Page 1 crop}"));
-    if pdfcraft_engine::ocr::available() {
-        assert!(report.contains("\\noindent OCR.:"), "{report}");
-    }
+    assert!(report.contains("\\noindent OCR.: Page 1"), "{report}");
     let marker: Value = serde_json::from_str(&std::fs::read_to_string(root.join("report.marker.json")).unwrap()).unwrap();
     assert_eq!(marker["items"][0]["caption"], "Page 1 crop");
-    assert_eq!(marker["items"][0]["ocr_text"].is_string(), pdfcraft_engine::ocr::available());
+    assert_eq!(marker["items"][0]["ocr_text"].as_str().map(str::trim), Some("Page 1"));
 }
 
 #[test]
