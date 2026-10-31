@@ -424,7 +424,8 @@ fn app_creator<'a>(
         {
             app.motion.source = Some(motion::source());
         }
-        app.set_startup_update_check(true);
+        // No update check at start: the updater's feed is upstream PdfCraft's, and it would offer
+        // to install upstream's app over this one. Help ▸ Check for updates opens our releases page.
         app.printer_source = Some(pdfcraft_ui_egui::system_printers());
         app.os_key_store_ids = cfg!(any(target_os = "macos", target_os = "windows"));
         #[cfg(target_os = "macos")]
@@ -1471,6 +1472,14 @@ mod tests {
             assert_eq!(mode & 0o077, 0, "only the owner can read the token: {mode:o}");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The desktop app never turns on the check at start: the updater's feed is upstream
+    /// PdfCraft's, and its prompt would install upstream's app over this one.
+    #[test]
+    fn no_update_check_at_start() {
+        let product = include_str!("main.rs").split("\n#[cfg(test)]\nmod tests {").next().unwrap_or_default();
+        assert!(!product.contains(concat!("set_startup_update_check", "(true)")));
     }
 
     /// X11 startup notification and docks match a window to its launcher by `StartupWMClass`,

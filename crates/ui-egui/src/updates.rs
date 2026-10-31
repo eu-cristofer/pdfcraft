@@ -7,8 +7,10 @@ use egui::{Align, Layout};
 
 use crate::{PdfCraftApp, theme, widgets};
 
-/// Where every PdfCraft release is listed.
-pub const RELEASES_PAGE: &str = "https://github.com/storytold/pdfcraft/releases";
+/// Where every release of this build is listed. This fork never checks upstream PdfCraft's
+/// release feed: its updater would offer, download and install upstream's app over this one.
+// keep in sync with crates/ui-egui/src/branding.rs (HOMEPAGE_URL)
+pub const RELEASES_PAGE: &str = "https://github.com/eu-cristofer/pdfcraft/releases";
 
 /// Stands in for the network in tests.
 #[cfg(not(target_arch = "wasm32"))]
@@ -53,17 +55,10 @@ impl PdfCraftApp {
         self.updates.updater = Updater::new(&craft_update::suite::PDFCRAFT, env!("CARGO_PKG_VERSION")).with_source(source);
     }
 
-    /// Help ▸ Check for updates: ask for the latest release and show the outcome.
+    /// Help ▸ Check for updates: open this build's releases page. The in-app updater stays off
+    /// on every platform, because its feed is upstream PdfCraft's.
     pub fn check_for_updates(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.updates.open = true;
-            self.updates.check_requested = true;
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.open_url(RELEASES_PAGE);
-        }
+        self.open_url(RELEASES_PAGE);
     }
 
     /// Starts the checks and picks up their answers (each frame).

@@ -22,15 +22,6 @@ fn source(answer: Result<Option<&str>, &str>) -> UpdateSource {
     Arc::new(move || answer.clone())
 }
 
-fn harness(answer: Result<Option<&str>, &str>) -> Harness<'static, PdfCraftApp> {
-    Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
-        let mut app = PdfCraftApp::new();
-        app.set_option("language", "en").unwrap();
-        app.set_update_source(source(answer));
-        app
-    })
-}
-
 /// Run frames until the background check has reported. By what the dialog shows, with the
 /// same 30-second deadline as `support::wait_until`, not for a fixed second: under load the
 /// check's thread can take longer (#1277).
@@ -47,35 +38,10 @@ fn settle(h: &mut Harness<'static, PdfCraftApp>) {
     h.run_steps(2);
 }
 
+/// Help ▸ Check for updates opens this fork's releases page and never asks the updater, whose
+/// feed is upstream PdfCraft's: it would offer to install upstream's app over this one.
 #[test]
-fn a_newer_release_is_offered_for_download() {
-    let mut h = harness(Ok(Some("v99.0.0")));
-    h.state_mut().execute("help.check_updates");
-    settle(&mut h);
-    h.get_by_label_contains("PdfCraft 99.0.0 is available");
-    h.get_by_label("DOWNLOAD");
-    h.get_by_label("LATER").click();
-    h.run_steps(3);
-    assert!(h.query_by_label_contains("is available").is_none(), "Later closes the dialog");
-}
-
-#[test]
-fn an_up_to_date_or_failed_check_says_so() {
-    let mut h = harness(Ok(None));
-    h.state_mut().execute("help.check_updates");
-    settle(&mut h);
-    h.get_by_label_contains("is up to date");
-    assert!(h.query_by_label("Download").is_none());
-
-    let mut h = harness(Err("couldn't reach GitHub"));
-    h.state_mut().execute("help.check_updates");
-    settle(&mut h);
-    h.get_by_label_contains("Couldn't check for updates: couldn't reach GitHub");
-}
-
-#[test]
-fn nothing_is_asked_until_the_user_checks() {
-    // The check at start is opt-in (the desktop app turns it on): the source is only called from the command.
+fn check_for_updates_opens_this_forks_releases_page_without_asking_upstream() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = calls.clone();
     let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
@@ -91,12 +57,12 @@ fn nothing_is_asked_until_the_user_checks() {
         app
     });
     settle(&mut h);
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
-    assert!(h.query_by_label_contains("is available").is_none());
     h.state_mut().execute("help.check_updates");
     settle(&mut h);
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    h.get_by_label_contains("PdfCraft 99.0.0 is available");
+    assert_eq!(h.state().last_opened_url.as_deref(), Some("https://github.com/eu-cristofer/pdfcraft/releases"));
+    assert_eq!(pdfcraft_ui_egui::updates::RELEASES_PAGE, format!("{}/releases", pdfcraft_ui_egui::branding::HOMEPAGE_URL));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0, "the upstream feed is never asked");
+    assert!(h.query_by_label_contains("is available").is_none());
 }
 
 #[test]
