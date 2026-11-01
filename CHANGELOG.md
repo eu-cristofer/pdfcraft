@@ -11,7 +11,7 @@ from. Release tags follow that same runbook's methodology,
 `<upstream-version>-unsigned.<YYYYMMDD>` (e.g. `0.14.0-unsigned.20261025`) — so a release tag and
 a changelog entry always describe the same upstream lineage, just in two different places.
 
-## 2026-10-29 (on top of upstream 0.14.0) — WitnessPoint PDF Review v0.1
+## 2026-10-31 (on top of upstream 0.14.0) — WitnessPoint PDF Review v0.1
 
 The first public pre-release of this fork, as **WitnessPoint PDF Review** (Costa Inspection's WitnessPoint suite). The crop review, OCR and evidence-package export work as they did on `feat/crop-panel-unification`, with no ArtCraft marks: a branding module and the suite's own placeholder mark (sprint 1), a green test suite (1b), its own icon, links and publisher (2), a Windows portable zip with the OCR models (3), the fork's docs layout (4), and working OCR checked in every package by CI (D-017). Details are in the entries below.
 
@@ -19,12 +19,13 @@ The first public pre-release of this fork, as **WitnessPoint PDF Review** (Costa
 - **Fixed** two export tests that only passed while OCR could not run: the Export dialog test now expects no OCR text from its blank pages (it fails with the mismatched models of D-017), and the macOS file-association test re-encodes its captured LaunchServices binding with the new bundle path and id (`006_pdf-release-v0-1` sprint 5).
 - **Fixed** crop OCR reading the wrong part of the page: the OCR tile was scaled twice, so a crop's `ocr_text` came from the area at twice its coordinates (the evidence image was right, its text was not). It affected the Crops panel, the Export dialog and `doc_export_snapshot_package`/`doc_export_crop_review_package`, and stayed hidden while OCR never worked (D-017). Found by the v0.1 smoke test; the release run was cancelled before publishing. A new engine test checks that each half of a scanned page OCRs to the same words as the original's native text; the release OCR smoke test now also exports a 3-crop package and checks each crop's text (`006_pdf-release-v0-1` sprint 5).
 - **Removed** upstream's update check. At start, and from Help ▸ Check for updates, the app asked upstream PdfCraft's release feed and offered "Update and restart", which would install upstream's app over this one (found in the v0.1 smoke test of a local build). The app no longer checks at start, and Help ▸ Check for updates opens this fork's releases page in the browser (`006_pdf-release-v0-1` sprint 5).
+- **Released** as the pre-release [`0.14.0-unsigned.20261031`](https://github.com/eu-cristofer/pdfcraft/releases/tag/0.14.0-unsigned.20261031) (run 41237856261): a universal macOS dmg (x86_64 + arm64), a macOS CLI zip and a Windows x64 portable zip. CI ran the OCR smoke test on all three. Smoke checklist on the published files, with a synthetic 3-line scan (no client data), passed on macOS and on Windows (a non-admin account, from the portable zip): launch, title and About ("WitnessPoint PDF Review", "Based on PdfCraft…"); 3 crops drawn, captions and notes edited; saved, closed and reopened with the crops kept; package exported with `report.docx` and OCR: `item_1..item_3` in order, 3 PNGs, each `ocr_text` exactly its crop's line. The app has no command to save a crop-review project folder (only the tests call it), so the save/reopen step used File ▸ Save, which keeps the crops inside the PDF (`006_pdf-release-v0-1` sprint 5).
 - **Known, left on purpose:**
   - the Linux, FreeBSD and Flatpak packaging and the hicolor icon file names still use `ai.storyteller.pdfcraft` (only `StartupWMClass` moved, to match the app id). None of them ships in v0.1; the upstream port (P5) renames them;
   - the settings and recovery folder is still named `PdfCraft`, so it is shared with an upstream PdfCraft installed on the same machine. Moving it needs a migration;
   - the executables are still `pdfcraft`/`pdfcraft-cli`, and the macOS executable inside the bundle is still `PdfCraft`;
   - the MSI's shortcut and menu labels still say PdfCraft (the MSI is not published in v0.1);
-  - in-app translated strings that name PdfCraft are unchanged (the About box says "Based on PdfCraft");
+  - in-app translated strings that name PdfCraft are unchanged (the About box says "Based on PdfCraft"; the Help menu says "About PdfCraft"; the crop-review export dialog says "…PdfCraft will create inside it");
   - the DMG has no custom background: the committed Finder layout is bound to the old names. It opens as a plain window;
   - the icon is still the placeholder.
 

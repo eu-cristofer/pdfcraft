@@ -22,11 +22,11 @@ Each run MUST:
 8. When all sprints are checked, mark the project `Status: ready to archive` and
    archive it later with `/sprint-loop archive <project>`.
 
-Status: active
+Status: ready to archive
 
 - [x] [Sprint 1 — Branding module and removal of the in-app marks](./sprint-1.md) — done 2026-10-29
 - [x] [Sprint 1b — Baseline repair (added 2026-10-29, D-015)](./sprint-1b.md) — done 2026-10-29
 - [x] [Sprint 2 — App icon, ids and packaging metadata](./sprint-2.md) — done 2026-10-29
 - [x] [Sprint 3 — Portable Windows zip with OCR models](./sprint-3.md) — done 2026-10-29
 - [x] [Sprint 4 — Fork documentation layout](./sprint-4.md) — done 2026-10-29
-- [ ] [Sprint 5 — Release (gated on the suite name, U1)](./sprint-5.md)
+- [x] [Sprint 5 — Release (gated on the suite name, U1)](./sprint-5.md) — done 2026-11-01
